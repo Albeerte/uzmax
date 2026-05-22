@@ -1,0 +1,182 @@
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [23516]
+INFO:     Waiting for application startup.
+ERROR:main:Bootstrap face 2.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 3.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 4.png: [WinError 10061] No connection could be made because the target machine actively refused it
+INFO:main:Face bootstrap done: loaded=0 skipped=3
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [6220]
+INFO:     Waiting for application startup.
+INFO:main:Face bootstrap skipped: GEMINI_API_KEY is not configured
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [21144]
+INFO:     Waiting for application startup.
+INFO:main:Face bootstrap skipped: GEMINI_API_KEY is not configured
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:52182 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:49227 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [11360]
+INFO:     Waiting for application startup.
+INFO:main:Face bootstrap skipped: GEMINI_API_KEY is not configured
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 5000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [6220]
+INFO:     Waiting for application startup.
+INFO:main:Face bootstrap skipped: GEMINI_API_KEY is not configured
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:53165 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     127.0.0.1:50809 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:58972 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:54867 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:61308 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:57866 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:49850 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:57195 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:     127.0.0.1:58110 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:56344 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:59162 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:51339 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:57039 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:60341 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:64833 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:54919 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:49602 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:64298 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [8560]
+INFO:     Waiting for application startup.
+ERROR:main:Bootstrap face 2.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 3.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 4.png: [WinError 10061] No connection could be made because the target machine actively refused it
+INFO:main:Face bootstrap done: loaded=0 skipped=3
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 5000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[THERMAL] adafruit_mlx90640 not installed — thermal camera disabled
+INFO:     Started server process [19540]
+INFO:     Waiting for application startup.
+ERROR:main:Bootstrap face 2.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 3.png: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR:main:Bootstrap face 4.png: [WinError 10061] No connection could be made because the target machine actively refused it
+INFO:main:Face bootstrap done: loaded=0 skipped=3
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:52910 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:55851 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     127.0.0.1:57729 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+ERROR:root:gRPC streaming error: StatusCode.UNAVAILABLE — failed to connect to all addresses; last error: UNAVAILABLE: ipv4:127.0.0.1:9: WSAGetOverlappedResult: Connection refused (No connection could be made because the target machine actively refused it.
+ -- 10061)
+INFO:     connection closed
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:64343 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:63176 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+ERROR:root:gRPC streaming error: StatusCode.UNAVAILABLE — failed to connect to all addresses; last error: UNAVAILABLE: ipv4:127.0.0.1:9: WSAGetOverlappedResult: Connection refused (No connection could be made because the target machine actively refused it.
+ -- 10061)
+ERROR:root:gRPC streaming error: StatusCode.UNAVAILABLE — failed to connect to all addresses; last error: UNAVAILABLE: ipv4:127.0.0.1:9: WSAGetOverlappedResult: Connection refused (No connection could be made because the target machine actively refused it.
+ -- 10061)
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:57683 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:60023 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open
+INFO:     connection closed
+INFO:     connection closed
+INFO:main:WS /ws/thermal disconnected
+INFO:     127.0.0.1:49960 - "WebSocket /ws/chat" [accepted]
+INFO:main:WS /ws/chat connected
+INFO:     connection open
+INFO:     127.0.0.1:58931 - "WebSocket /ws/thermal" [accepted]
+INFO:main:WS /ws/thermal connected
+INFO:     connection open

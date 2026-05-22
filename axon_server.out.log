@@ -1,0 +1,12 @@
+
+======================================================
+  AXON - Unified Robot Control Server
+  Movement | Hand | Head ESP32 - independent ports
+======================================================
+
+  Open : http://localhost:5000
+  Select COM ports in the browser UI
+======================================================
+
+ * Serving Flask app 'axon_server'
+ * Debug mode: off
