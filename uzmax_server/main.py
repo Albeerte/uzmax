@@ -20,10 +20,10 @@ Protocol for ESP32_MOVE:
     MOVE FWD 150 / MOVE BACK 150 / MOVE LEFT 120 / MOVE RIGHT 120 / MOVE STOP
 
 Run:
-    cd uzmax_server
-    python main.py
+    python uzmax_server/main.py
     # or
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    cd uzmax_server
+    uvicorn main:app --host 0.0.0.0 --port 5000 --reload
 
 .env keys needed:
     YANDEX_CATALOG_ID
@@ -60,6 +60,9 @@ from agent.text_to_speech import YandexStreamingSynthesizer, TtsStreamingSession
 from agent.llm import OpenAIClient
 from agent.face_encoder import FaceEncoder
 from agent.face_store import FaceVectorStore
+
+BASE_DIR = Path(__file__).resolve().parent
+os.chdir(BASE_DIR)
 
 # ── MLX90640 Thermal Camera (optional — only works on RPi with I2C) ──
 try:
@@ -1520,8 +1523,11 @@ async def get():
 
 if __name__ == "__main__":
     import uvicorn
+    host = os.getenv("UZMAX_HOST", "0.0.0.0")
+    port = int(os.getenv("UZMAX_PORT", "5000"))
     print("=" * 56)
-    print("  UzMAX Unified Server  →  http://localhost:8000")
+    print(f"  UzMAX Unified Server  ->  http://127.0.0.1:{port}")
+    print(f"  LAN/server link       ->  http://YOUR_SERVER_IP:{port}")
     print("  Medical AI  +  Robot Control (HAND/HEAD/MOVE)")
     print("=" * 56)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=host, port=port, log_level="info")
