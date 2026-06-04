@@ -39,9 +39,11 @@ import base64
 import asyncio
 import logging
 import shutil
+import socket
 import subprocess
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
 
@@ -65,15 +67,19 @@ BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
 
 # ── MLX90640 Thermal Camera (optional — only works on RPi with I2C) ──
-try:
-    import board
-    import busio
-    import adafruit_mlx90640
-    _THERMAL_HW = True
-    _THERMAL_IMPORT_ERROR = None
-except Exception as exc:
+if os.name == "nt":
     _THERMAL_HW = False
-    _THERMAL_IMPORT_ERROR = str(exc)
+    _THERMAL_IMPORT_ERROR = "Windows does not provide direct I2C access for MLX90640."
+else:
+    try:
+        import board
+        import busio
+        import adafruit_mlx90640
+        _THERMAL_HW = True
+        _THERMAL_IMPORT_ERROR = None
+    except Exception as exc:
+        _THERMAL_HW = False
+        _THERMAL_IMPORT_ERROR = str(exc)
 
 
 class ThermalCamera:
@@ -105,7 +111,7 @@ class ThermalCamera:
                     "Python thermal libraries are missing. Install adafruit-circuitpython-mlx90640 "
                     "and adafruit-blinka on the Raspberry Pi that has the MLX90640 connected."
                 )
-            logger_pre.warning("[THERMAL] thermal dependencies missing: %s", _THERMAL_IMPORT_ERROR)
+            logger_pre.info("[THERMAL] local I2C unavailable: %s", _THERMAL_IMPORT_ERROR)
             return
 
         try:
@@ -275,7 +281,19 @@ def write_env_values(new_values: dict) -> None:
 
     ENV_PATH.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
 
-app = FastAPI(title="UzMAX Unified Server")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if not GEMINI_API_KEY:
+        logger.info("Face bootstrap skipped: GEMINI_API_KEY is not configured")
+    else:
+        try:
+            load_registered_faces()
+        except Exception as exc:
+            logger.warning("Face bootstrap skipped: %s", exc)
+    yield
+
+
+app = FastAPI(title="UzMAX Unified Server", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -977,17 +995,6 @@ def load_registered_faces() -> tuple[int, int]:
     return loaded, skipped
 
 
-@app.on_event("startup")
-async def startup_bootstrap_faces():
-    if not GEMINI_API_KEY:
-        logger.info("Face bootstrap skipped: GEMINI_API_KEY is not configured")
-        return
-    try:
-        load_registered_faces()
-    except Exception as exc:
-        logger.warning("Face bootstrap skipped: %s", exc)
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  FACE API
 # ═══════════════════════════════════════════════════════════════════
@@ -1525,6 +1532,15 @@ if __name__ == "__main__":
     import uvicorn
     host = os.getenv("UZMAX_HOST", "0.0.0.0")
     port = int(os.getenv("UZMAX_PORT", "5000"))
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_check:
+        try:
+            port_check.bind((host, port))
+        except OSError:
+            print(f"ERROR: Port {port} is already in use.")
+            print("Stop the existing UzMAX server or set UZMAX_PORT to another port.")
+            raise SystemExit(1)
+
     print("=" * 56)
     print(f"  UzMAX Unified Server  ->  http://127.0.0.1:{port}")
     print(f"  LAN/server link       ->  http://YOUR_SERVER_IP:{port}")
