@@ -1,7 +1,7 @@
 """Local launcher for the UzMAX Medicine + Robot Control MVP.
 
 This keeps the simple command `python app.py` while making the FastAPI app in
-medicine-rag the canonical local server.
+uzmax_server the canonical local server.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import uvicorn
 
 
 ROOT = Path(__file__).resolve().parent
-APP_DIR = ROOT / "medicine-rag"
+APP_DIR = ROOT / "uzmax_server"
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(APP_DIR))
