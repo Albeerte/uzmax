@@ -24,8 +24,11 @@ from main import app  # noqa: E402
 
 
 if __name__ == "__main__":
+    host = os.getenv("UZMAX_HOST", "0.0.0.0")
+    port = int(os.getenv("UZMAX_PORT", "5000"))
     print("=" * 56)
-    print("  UzMAX Local MVP -> http://127.0.0.1:5000")
+    print(f"  UzMAX Local MVP -> http://127.0.0.1:{port}")
+    print(f"  LAN/server link -> http://YOUR_SERVER_IP:{port}")
     print("  Medicine AI + Robot Control (HAND/HEAD/MOVE)")
     print("=" * 56)
-    uvicorn.run(app, host="127.0.0.1", port=5000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
