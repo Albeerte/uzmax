@@ -7,7 +7,7 @@
 #define LED_PIN 4
 #define LED_COUNT 84
 #define LED_BRIGHTNESS 60
-#define LED_ORDER_DEFAULT "RGB"
+#define LED_ORDER_DEFAULT "GBR"
 
 #define HEAD_SERVO_PIN 33
 
@@ -18,6 +18,7 @@ Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
 String ledOrder = LED_ORDER_DEFAULT;
+int neutralValue = 90;
 
 void mapColor(uint8_t r, uint8_t g, uint8_t b, uint8_t &outR, uint8_t &outG, uint8_t &outB) {
   if (ledOrder == "RGB") {
@@ -88,17 +89,17 @@ void rainbow(int waitMs) {
 }
 
 void servoStop() {
-  headServo.write(90);
+  headServo.write(neutralValue);
 }
 
 void servoLeft(int speedValue) {
   speedValue = constrain(speedValue, 0, 90);
-  headServo.write(90 - speedValue);
+  headServo.write(constrain(neutralValue - speedValue, 0, 180));
 }
 
 void servoRight(int speedValue) {
   speedValue = constrain(speedValue, 0, 90);
-  headServo.write(90 + speedValue);
+  headServo.write(constrain(neutralValue + speedValue, 0, 180));
 }
 
 void printReady() {
@@ -109,9 +110,11 @@ void printReady() {
   Serial.println("HEAD LEFT 40");
   Serial.println("HEAD RIGHT 40");
   Serial.println("HEAD STOP");
+  Serial.println("HEAD SERVO 90");
+  Serial.println("HEAD NEUTRAL 90");
   Serial.println("HEAD LED 255 0 0");
   Serial.println("HEAD BRIGHTNESS 60");
-  Serial.println("HEAD LED_ORDER RGB");
+  Serial.println("HEAD LED_ORDER GBR");
   Serial.println("HEAD LED_OFF");
   Serial.println("HEAD RAINBOW");
 }
@@ -152,6 +155,14 @@ void handleCommand(String command) {
   if (upper == "HEAD STOP") {
     servoStop();
     Serial.println("OK:HEAD_STOP");
+    return;
+  }
+
+  if (upper.startsWith("HEAD NEUTRAL ")) {
+    neutralValue = constrain(command.substring(13).toInt(), 0, 180);
+    servoStop();
+    Serial.print("OK:HEAD_NEUTRAL ");
+    Serial.println(neutralValue);
     return;
   }
 

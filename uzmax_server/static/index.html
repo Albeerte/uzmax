@@ -769,14 +769,24 @@
         <div class="card-head"><span class="card-title">🧠 Head Control</span><span id="head-st" style="font-size:.76rem;color:var(--muted)">Stopped</span></div>
         <div class="card-body">
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-            <button class="btn btn-ghost" onpointerdown="headMove('LEFT')" onpointerup="headStop()" onpointercancel="headStop()" onmouseleave="headStop()">◀</button>
-            <button class="btn btn-red" onclick="headStop()">■</button>
-            <button class="btn btn-ghost" onpointerdown="headMove('RIGHT')" onpointerup="headStop()" onpointercancel="headStop()" onmouseleave="headStop()">▶</button>
+            <button class="btn btn-ghost" onclick="headMove('LEFT')">◀ Left</button>
+            <button class="btn btn-red" onclick="headStop()">■ Stop</button>
+            <button class="btn btn-ghost" onclick="headMove('RIGHT')">Right ▶</button>
           </div>
           <div class="srv-row">
             <span class="srv-lbl">Head speed</span>
             <input type="range" min="1" max="90" value="40" oninput="headSetSpeed(this.value)">
             <span class="srv-val" id="head-speed-val">40</span>
+          </div>
+          <div class="srv-row">
+            <span class="srv-lbl">Neutral</span>
+            <input type="range" min="70" max="110" value="90" oninput="headNeutral(this.value)">
+            <span class="srv-val" id="head-neutral-val">90</span>
+          </div>
+          <div class="srv-row">
+            <span class="srv-lbl">Raw servo</span>
+            <input type="range" min="0" max="180" value="90" oninput="headRaw(this.value)">
+            <span class="srv-val" id="head-raw-val">90</span>
           </div>
         </div>
       </div>
@@ -812,10 +822,10 @@
           <div class="srv-row">
             <span class="srv-lbl">Color order</span>
             <select class="psel" id="led-order" onchange="ledOrder(this.value)" style="flex:1;">
-              <option value="RGB" selected>RGB</option>
+              <option value="RGB">RGB</option>
               <option value="GRB">GRB</option>
               <option value="RBG">RBG</option>
-              <option value="GBR">GBR</option>
+              <option value="GBR" selected>GBR</option>
               <option value="BRG">BRG</option>
               <option value="BGR">BGR</option>
             </select>
@@ -2017,6 +2027,18 @@ function hs(num,angle) {
 function headSetSpeed(value) {
   headSpeed = parseInt(value || 40);
   document.getElementById('head-speed-val').textContent = headSpeed;
+}
+
+async function headNeutral(value) {
+  document.getElementById('head-neutral-val').textContent = value;
+  await headSend(`HEAD NEUTRAL ${value}`);
+}
+
+async function headRaw(value) {
+  document.getElementById('head-raw-val').textContent = value;
+  const st = document.getElementById('head-st');
+  if (st) st.textContent = `Raw ${value}`;
+  await headSend(`HEAD SERVO ${value}`);
 }
 
 async function headSend(cmd, label=cmd) {
