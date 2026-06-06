@@ -7,42 +7,18 @@
 #define LED_PIN 4
 #define LED_COUNT 84
 #define LED_BRIGHTNESS 60
-#define LED_ORDER_DEFAULT "GBR"
 
 #define HEAD_SERVO_PIN 33
 
-// Keep the library in RGB mode and do logical->physical color mapping ourselves.
-// If colors are mixed, change from the website with HEAD LED_ORDER RGB/GRB/BRG/etc.
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
 Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
-String ledOrder = LED_ORDER_DEFAULT;
 int neutralValue = 90;
 
-void mapColor(uint8_t r, uint8_t g, uint8_t b, uint8_t &outR, uint8_t &outG, uint8_t &outB) {
-  if (ledOrder == "RGB") {
-    outR = r; outG = g; outB = b;
-  } else if (ledOrder == "RBG") {
-    outR = r; outG = b; outB = g;
-  } else if (ledOrder == "GRB") {
-    outR = g; outG = r; outB = b;
-  } else if (ledOrder == "GBR") {
-    outR = g; outG = b; outB = r;
-  } else if (ledOrder == "BRG") {
-    outR = b; outG = r; outB = g;
-  } else if (ledOrder == "BGR") {
-    outR = b; outG = g; outB = r;
-  } else {
-    outR = r; outG = g; outB = b;
-  }
-}
-
 void setAll(uint8_t r, uint8_t g, uint8_t b) {
-  uint8_t outR, outG, outB;
-  mapColor(r, g, b, outR, outG, outB);
   for (int i = 0; i < LED_COUNT; i++) {
-    strip.setPixelColor(i, strip.Color(outR, outG, outB));
+    strip.setPixelColor(i, strip.Color(r, g, b));
   }
   strip.show();
 }
@@ -74,13 +50,7 @@ void rainbow(int waitMs) {
 
     for (int i = 0; i < LED_COUNT; i++) {
       int pixelHue = hue + (i * 65536L / LED_COUNT);
-      uint32_t rgb = strip.gamma32(strip.ColorHSV(pixelHue));
-      uint8_t r = (uint8_t)(rgb >> 16);
-      uint8_t g = (uint8_t)(rgb >> 8);
-      uint8_t b = (uint8_t)rgb;
-      uint8_t outR, outG, outB;
-      mapColor(r, g, b, outR, outG, outB);
-      strip.setPixelColor(i, strip.Color(outR, outG, outB));
+      strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
     }
 
     strip.show();
@@ -114,7 +84,6 @@ void printReady() {
   Serial.println("HEAD NEUTRAL 90");
   Serial.println("HEAD LED 255 0 0");
   Serial.println("HEAD BRIGHTNESS 60");
-  Serial.println("HEAD LED_ORDER GBR");
   Serial.println("HEAD LED_OFF");
   Serial.println("HEAD RAINBOW");
 }
@@ -200,21 +169,6 @@ void handleCommand(String command) {
 
     Serial.print("OK:BRIGHTNESS ");
     Serial.println(brightnessValue);
-    return;
-  }
-
-  if (upper.startsWith("HEAD LED_ORDER ")) {
-    String orderValue = command.substring(15);
-    orderValue.trim();
-    orderValue.toUpperCase();
-    if (orderValue == "RGB" || orderValue == "RBG" || orderValue == "GRB" ||
-        orderValue == "GBR" || orderValue == "BRG" || orderValue == "BGR") {
-      ledOrder = orderValue;
-      Serial.print("OK:LED_ORDER ");
-      Serial.println(ledOrder);
-    } else {
-      Serial.println("ERR:LED_ORDER");
-    }
     return;
   }
 

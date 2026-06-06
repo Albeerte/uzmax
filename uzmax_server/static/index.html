@@ -819,18 +819,6 @@
             <input type="range" min="0" max="255" value="60" oninput="ledBrightness(this.value)">
             <span class="srv-val" id="led-bright-val">60</span>
           </div>
-          <div class="srv-row">
-            <span class="srv-lbl">Color order</span>
-            <select class="psel" id="led-order" onchange="ledOrder(this.value)" style="flex:1;">
-              <option value="RGB">RGB</option>
-              <option value="GRB">GRB</option>
-              <option value="RBG">RBG</option>
-              <option value="GBR" selected>GBR</option>
-              <option value="BRG">BRG</option>
-              <option value="BGR">BGR</option>
-            </select>
-            <span class="srv-val" style="width:44px">map</span>
-          </div>
         </div>
       </div>
     </div><!-- /left -->
@@ -2071,11 +2059,6 @@ async function led(r,g,b){
 async function ledBrightness(value){
   document.getElementById('led-bright-val').textContent=value;
   const cmd=`HEAD BRIGHTNESS ${value}`;
-  const res=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
-  addLog(cmd,(await res.json()).ok?'tx':'err');
-}
-async function ledOrder(order){
-  const cmd=`HEAD LED_ORDER ${order}`;
   const res=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
   addLog(cmd,(await res.json()).ok?'tx':'err');
 }
