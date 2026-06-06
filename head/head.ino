@@ -9,17 +9,16 @@
 #define LED_BRIGHTNESS 60
 
 #define HEAD_SERVO_PIN 33
-#define SERVO_MIN_US 500
-#define SERVO_MAX_US 2500
-#define SERVO_NEUTRAL_US 1500
-#define SERVO_MAX_OFFSET_US 500
 
-Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
-int neutralValue = 90;
-int neutralPulseUs = SERVO_NEUTRAL_US;
+
+// Continuous servo values
+int SERVO_STOP = 1500;
+int SERVO_LEFT = 1300;
+int SERVO_RIGHT = 1700;
 
 void setAll(uint8_t r, uint8_t g, uint8_t b) {
   for (int i = 0; i < LED_COUNT; i++) {
@@ -49,6 +48,23 @@ bool parseThreeInts(String text, int startIndex, int &a, int &b, int &c) {
   return true;
 }
 
+void servoStop() {
+  headServo.writeMicroseconds(SERVO_STOP);
+}
+
+void servoLeft() {
+  headServo.writeMicroseconds(SERVO_LEFT);
+}
+
+void servoRight() {
+  headServo.writeMicroseconds(SERVO_RIGHT);
+}
+
+void servoRaw(int us) {
+  us = constrain(us, 1000, 2000);
+  headServo.writeMicroseconds(us);
+}
+
 void rainbow(int waitMs) {
   for (long hue = 0; hue < 65536; hue += 256) {
     if (Serial.available()) return;
@@ -63,37 +79,16 @@ void rainbow(int waitMs) {
   }
 }
 
-void servoStop() {
-  headServo.writeMicroseconds(neutralPulseUs);
-}
-
-void servoLeft(int speedValue) {
-  speedValue = constrain(speedValue, 0, 90);
-  int offset = map(speedValue, 0, 90, 0, SERVO_MAX_OFFSET_US);
-  headServo.writeMicroseconds(constrain(neutralPulseUs - offset, SERVO_MIN_US, SERVO_MAX_US));
-}
-
-void servoRight(int speedValue) {
-  speedValue = constrain(speedValue, 0, 90);
-  int offset = map(speedValue, 0, 90, 0, SERVO_MAX_OFFSET_US);
-  headServo.writeMicroseconds(constrain(neutralPulseUs + offset, SERVO_MIN_US, SERVO_MAX_US));
-}
-
 void printReady() {
   Serial.println("DEVICE:HEAD");
   Serial.println("HEAD READY");
   Serial.println("Commands:");
   Serial.println("PING");
-  Serial.println("HEAD LEFT 40");
-  Serial.println("HEAD RIGHT 40");
+  Serial.println("HEAD LEFT");
+  Serial.println("HEAD RIGHT");
   Serial.println("HEAD STOP");
-  Serial.println("HEAD SERVO 90");
-  Serial.println("HEAD SERVO 1 90");
-  Serial.println("HEAD NEUTRAL 90");
-  Serial.println("HEAD NEUTRAL_US 1500");
-  Serial.println("HEAD PULSE 1500");
+  Serial.println("HEAD SERVO 1500");
   Serial.println("HEAD LED 255 0 0");
-  Serial.println("HEAD BRIGHTNESS 60");
   Serial.println("HEAD LED_OFF");
   Serial.println("HEAD RAINBOW");
 }
@@ -113,20 +108,14 @@ void handleCommand(String command) {
     return;
   }
 
-  if (upper.startsWith("HEAD LEFT")) {
-    int speedValue = command.substring(9).toInt();
-    if (speedValue <= 0) speedValue = 40;
-
-    servoLeft(speedValue);
+  if (upper == "HEAD LEFT") {
+    servoLeft();
     Serial.println("OK:HEAD_LEFT");
     return;
   }
 
-  if (upper.startsWith("HEAD RIGHT")) {
-    int speedValue = command.substring(10).toInt();
-    if (speedValue <= 0) speedValue = 40;
-
-    servoRight(speedValue);
+  if (upper == "HEAD RIGHT") {
+    servoRight();
     Serial.println("OK:HEAD_RIGHT");
     return;
   }
@@ -137,39 +126,11 @@ void handleCommand(String command) {
     return;
   }
 
-  if (upper.startsWith("HEAD NEUTRAL ")) {
-    neutralValue = constrain(command.substring(13).toInt(), 0, 180);
-    neutralPulseUs = map(neutralValue, 0, 180, SERVO_MIN_US, SERVO_MAX_US);
-    headServo.write(neutralValue);
-    Serial.print("OK:HEAD_NEUTRAL ");
-    Serial.println(neutralValue);
-    return;
-  }
-
-  if (upper.startsWith("HEAD NEUTRAL_US ")) {
-    neutralPulseUs = constrain(command.substring(16).toInt(), SERVO_MIN_US, SERVO_MAX_US);
-    servoStop();
-    Serial.print("OK:HEAD_NEUTRAL_US ");
-    Serial.println(neutralPulseUs);
-    return;
-  }
-
-  if (upper.startsWith("HEAD PULSE ")) {
-    int pulse = constrain(command.substring(11).toInt(), SERVO_MIN_US, SERVO_MAX_US);
-    headServo.writeMicroseconds(pulse);
-    Serial.print("OK:HEAD_PULSE ");
-    Serial.println(pulse);
-    return;
-  }
-
   if (upper.startsWith("HEAD SERVO ")) {
-    String params = command.substring(11);
-    params.trim();
-    int splitIndex = params.indexOf(' ');
-    int value = splitIndex >= 0 ? params.substring(splitIndex + 1).toInt() : params.toInt();
-    value = constrain(value, 0, 180);
-    headServo.write(value);
-    Serial.println("OK:HEAD_SERVO_RAW");
+    int us = command.substring(11).toInt();
+    servoRaw(us);
+    Serial.print("OK:HEAD_SERVO ");
+    Serial.println(us);
     return;
   }
 
@@ -189,17 +150,6 @@ void handleCommand(String command) {
   if (upper == "HEAD LED_OFF") {
     ledOff();
     Serial.println("OK:LED_OFF");
-    return;
-  }
-
-  if (upper.startsWith("HEAD BRIGHTNESS ")) {
-    int value = constrain(command.substring(16).toInt(), 0, 255);
-    brightnessValue = value;
-    strip.setBrightness(brightnessValue);
-    strip.show();
-
-    Serial.print("OK:BRIGHTNESS ");
-    Serial.println(brightnessValue);
     return;
   }
 
@@ -247,7 +197,7 @@ void setup() {
   ESP32PWM::allocateTimer(0);
 
   headServo.setPeriodHertz(50);
-  headServo.attach(HEAD_SERVO_PIN, SERVO_MIN_US, SERVO_MAX_US);
+  headServo.attach(HEAD_SERVO_PIN, 1000, 2000);
 
   servoStop();
 
