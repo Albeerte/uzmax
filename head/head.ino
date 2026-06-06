@@ -9,12 +9,17 @@
 #define LED_BRIGHTNESS 60
 
 #define HEAD_SERVO_PIN 33
+#define SERVO_MIN_US 500
+#define SERVO_MAX_US 2500
+#define SERVO_NEUTRAL_US 1500
+#define SERVO_MAX_OFFSET_US 500
 
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
 Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
 int neutralValue = 90;
+int neutralPulseUs = SERVO_NEUTRAL_US;
 
 void setAll(uint8_t r, uint8_t g, uint8_t b) {
   for (int i = 0; i < LED_COUNT; i++) {
@@ -59,17 +64,19 @@ void rainbow(int waitMs) {
 }
 
 void servoStop() {
-  headServo.write(neutralValue);
+  headServo.writeMicroseconds(neutralPulseUs);
 }
 
 void servoLeft(int speedValue) {
   speedValue = constrain(speedValue, 0, 90);
-  headServo.write(constrain(neutralValue - speedValue, 0, 180));
+  int offset = map(speedValue, 0, 90, 0, SERVO_MAX_OFFSET_US);
+  headServo.writeMicroseconds(constrain(neutralPulseUs - offset, SERVO_MIN_US, SERVO_MAX_US));
 }
 
 void servoRight(int speedValue) {
   speedValue = constrain(speedValue, 0, 90);
-  headServo.write(constrain(neutralValue + speedValue, 0, 180));
+  int offset = map(speedValue, 0, 90, 0, SERVO_MAX_OFFSET_US);
+  headServo.writeMicroseconds(constrain(neutralPulseUs + offset, SERVO_MIN_US, SERVO_MAX_US));
 }
 
 void printReady() {
@@ -81,7 +88,10 @@ void printReady() {
   Serial.println("HEAD RIGHT 40");
   Serial.println("HEAD STOP");
   Serial.println("HEAD SERVO 90");
+  Serial.println("HEAD SERVO 1 90");
   Serial.println("HEAD NEUTRAL 90");
+  Serial.println("HEAD NEUTRAL_US 1500");
+  Serial.println("HEAD PULSE 1500");
   Serial.println("HEAD LED 255 0 0");
   Serial.println("HEAD BRIGHTNESS 60");
   Serial.println("HEAD LED_OFF");
@@ -129,14 +139,35 @@ void handleCommand(String command) {
 
   if (upper.startsWith("HEAD NEUTRAL ")) {
     neutralValue = constrain(command.substring(13).toInt(), 0, 180);
-    servoStop();
+    neutralPulseUs = map(neutralValue, 0, 180, SERVO_MIN_US, SERVO_MAX_US);
+    headServo.write(neutralValue);
     Serial.print("OK:HEAD_NEUTRAL ");
     Serial.println(neutralValue);
     return;
   }
 
+  if (upper.startsWith("HEAD NEUTRAL_US ")) {
+    neutralPulseUs = constrain(command.substring(16).toInt(), SERVO_MIN_US, SERVO_MAX_US);
+    servoStop();
+    Serial.print("OK:HEAD_NEUTRAL_US ");
+    Serial.println(neutralPulseUs);
+    return;
+  }
+
+  if (upper.startsWith("HEAD PULSE ")) {
+    int pulse = constrain(command.substring(11).toInt(), SERVO_MIN_US, SERVO_MAX_US);
+    headServo.writeMicroseconds(pulse);
+    Serial.print("OK:HEAD_PULSE ");
+    Serial.println(pulse);
+    return;
+  }
+
   if (upper.startsWith("HEAD SERVO ")) {
-    int value = constrain(command.substring(11).toInt(), 0, 180);
+    String params = command.substring(11);
+    params.trim();
+    int splitIndex = params.indexOf(' ');
+    int value = splitIndex >= 0 ? params.substring(splitIndex + 1).toInt() : params.toInt();
+    value = constrain(value, 0, 180);
     headServo.write(value);
     Serial.println("OK:HEAD_SERVO_RAW");
     return;
@@ -216,7 +247,7 @@ void setup() {
   ESP32PWM::allocateTimer(0);
 
   headServo.setPeriodHertz(50);
-  headServo.attach(HEAD_SERVO_PIN, 500, 2500);
+  headServo.attach(HEAD_SERVO_PIN, SERVO_MIN_US, SERVO_MAX_US);
 
   servoStop();
 

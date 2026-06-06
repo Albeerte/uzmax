@@ -769,9 +769,9 @@
         <div class="card-head"><span class="card-title">🧠 Head Control</span><span id="head-st" style="font-size:.76rem;color:var(--muted)">Stopped</span></div>
         <div class="card-body">
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-            <button class="btn btn-ghost" onclick="headMove('LEFT')">◀ Left</button>
+            <button class="btn btn-ghost" onpointerdown="headHold(event,'LEFT')" onpointerup="headRelease(event)" onpointercancel="headRelease(event)" onpointerleave="headRelease(event)">◀ Left</button>
             <button class="btn btn-red" onclick="headStop()">■ Stop</button>
-            <button class="btn btn-ghost" onclick="headMove('RIGHT')">Right ▶</button>
+            <button class="btn btn-ghost" onpointerdown="headHold(event,'RIGHT')" onpointerup="headRelease(event)" onpointercancel="headRelease(event)" onpointerleave="headRelease(event)">Right ▶</button>
           </div>
           <div class="srv-row">
             <span class="srv-lbl">Head speed</span>
@@ -2043,7 +2043,30 @@ async function headMove(dir) {
   await headSend(cmd);
 }
 
+let headHeld = false;
+
+async function headHold(event, dir) {
+  if (event) {
+    event.preventDefault();
+    try { event.currentTarget?.setPointerCapture?.(event.pointerId); } catch {}
+  }
+  if (headHeld === dir) return;
+  headHeld = dir;
+  await headMove(dir);
+}
+
+async function headRelease(event) {
+  if (event) {
+    event.preventDefault();
+    try { event.currentTarget?.releasePointerCapture?.(event.pointerId); } catch {}
+  }
+  if (!headHeld) return;
+  headHeld = false;
+  await headStop();
+}
+
 async function headStop() {
+  headHeld = false;
   const st = document.getElementById('head-st');
   if (st) st.textContent = 'Stopped';
   await headSend('HEAD STOP');
