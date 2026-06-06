@@ -45,6 +45,7 @@ import logging
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -71,19 +72,38 @@ BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
 
 # ── MLX90640 Thermal Camera (optional — only works on RPi with I2C) ──
-if os.name == "nt":
-    _THERMAL_HW = False
-    _THERMAL_IMPORT_ERROR = "Windows does not provide direct I2C access for MLX90640."
-else:
+board = None
+busio = None
+adafruit_mlx90640 = None
+_THERMAL_HW = False
+_THERMAL_IMPORT_ERROR = None
+THERMAL_INSTALL_COMMAND = (
+    f"{sys.executable} -m pip install adafruit-circuitpython-mlx90640 adafruit-blinka"
+)
+
+
+def _try_import_thermal_hw() -> bool:
+    global board, busio, adafruit_mlx90640, _THERMAL_HW, _THERMAL_IMPORT_ERROR
+
+    if os.name == "nt":
+        _THERMAL_HW = False
+        _THERMAL_IMPORT_ERROR = "Windows does not provide direct I2C access for MLX90640."
+        return False
+
     try:
-        import board
-        import busio
-        import adafruit_mlx90640
+        import board as board_module
+        import busio as busio_module
+        import adafruit_mlx90640 as mlx_module
+        board = board_module
+        busio = busio_module
+        adafruit_mlx90640 = mlx_module
         _THERMAL_HW = True
         _THERMAL_IMPORT_ERROR = None
+        return True
     except Exception as exc:
         _THERMAL_HW = False
         _THERMAL_IMPORT_ERROR = str(exc)
+        return False
 
 
 class ThermalCamera:
@@ -98,8 +118,18 @@ class ThermalCamera:
         self._lock   = threading.Lock()
         self.reason  = "not_connected"
         self.message = "MLX90640 sensor is not connected."
+        self.initialize()
 
-        if not _THERMAL_HW:
+    def initialize(self) -> bool:
+        if self.enabled and self._mlx is not None:
+            return True
+
+        self.enabled = False
+        self._mlx = None
+        self.reason = "not_connected"
+        self.message = "MLX90640 sensor is not connected."
+
+        if not _try_import_thermal_hw():
             logger_pre = logging.getLogger(__name__)
             import_error = _THERMAL_IMPORT_ERROR or ""
             if "WINDOWS" in import_error.upper() or "UNABLE TO IDENTIFY THE BOARD" in import_error.upper():
@@ -112,24 +142,27 @@ class ThermalCamera:
             else:
                 self.reason = "missing_dependencies"
                 self.message = (
-                    "Python thermal libraries are missing. Install adafruit-circuitpython-mlx90640 "
-                    "and adafruit-blinka on the Raspberry Pi that has the MLX90640 connected."
+                    "Python thermal libraries are missing in the server Python environment. "
+                    "Run the install command below on the Raspberry Pi, using the same Python "
+                    "that starts uzmax_server/main.py, then press Thermal ON again."
                 )
             logger_pre.info("[THERMAL] local I2C unavailable: %s", _THERMAL_IMPORT_ERROR)
-            return
+            return False
 
         try:
-            i2c = busio.I2C(board.SCL, board.SDA, frequency=400_000)
+            i2c = busio.I2C(board.SCL, board.SDA, frequency=100_000)
             self._mlx = adafruit_mlx90640.MLX90640(i2c)
-            self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_4_HZ
+            self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
             self.enabled = True
             self.reason = None
             self.message = "MLX90640 ready."
-            logging.getLogger(__name__).info("[THERMAL] MLX90640 ready (4 Hz)")
+            logging.getLogger(__name__).info("[THERMAL] MLX90640 ready (2 Hz)")
+            return True
         except Exception as exc:
             self.reason = "init_failed"
             self.message = str(exc)
             logging.getLogger(__name__).warning("[THERMAL] MLX90640 init failed: %s", exc)
+            return False
 
     def read(self) -> dict:
         """Read one 32×24 frame. Returns dict with stats + flat list."""
@@ -138,7 +171,7 @@ class ThermalCamera:
                 "ok": False,
                 "reason": self.reason or "not_connected",
                 "message": self.message,
-                "install": "pip3 install adafruit-circuitpython-mlx90640 adafruit-blinka",
+                "install": THERMAL_INSTALL_COMMAND,
             }
         try:
             with self._lock:
@@ -223,6 +256,9 @@ def _read_thermal_source() -> dict:
 
 
 def _set_thermal_enabled(enabled: bool) -> dict:
+    if enabled:
+        _thermal.initialize()
+
     _thermal_runtime["enabled"] = bool(enabled)
     _thermal_runtime["updated_at"] = time.time()
     return {
@@ -231,6 +267,7 @@ def _set_thermal_enabled(enabled: bool) -> dict:
         "hardware_ready": bool(_thermal.enabled),
         "reason": None if _thermal.enabled else _thermal.reason,
         "message": _thermal.message,
+        "install": None if _thermal.enabled else THERMAL_INSTALL_COMMAND,
     }
 
 # ──────────────────────────────────────────────────────────────────
@@ -1582,6 +1619,7 @@ async def thermal_state():
         "hardware_ready": bool(_thermal.enabled),
         "reason": None if _thermal.enabled else _thermal.reason,
         "message": _thermal.message,
+        "install": None if _thermal.enabled else THERMAL_INSTALL_COMMAND,
     })
 
 
