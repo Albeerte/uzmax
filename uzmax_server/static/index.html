@@ -536,7 +536,10 @@
       <div class="card">
         <div class="card-head">
           <span class="card-title">🌡 Thermal Camera — MLX90640</span>
-          <span class="badge b-muted" id="thermal-badge">Offline</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="badge b-muted" id="thermal-badge">Offline</span>
+            <button class="btn btn-ghost btn-sm" id="thermal-toggle" onclick="toggleThermal()">Off</button>
+          </div>
         </div>
 
         <!-- Canvas heatmap -->
@@ -1613,6 +1616,7 @@ function downsampleTo16k(input, sourceRate) {
 //  THERMAL CAMERA  (WebSocket /ws/thermal)
 // ═══════════════════════════════════════════════════════════════
 let thermalWS  = null;
+let thermalEnabled = localStorage.getItem('uzmax_thermal_enabled') !== '0';
 const TCANVAS  = document.getElementById('thermal-canvas');
 const TCTX     = TCANVAS.getContext('2d');
 
@@ -1639,13 +1643,14 @@ function tempToRGB(t, tMin, tMax) {
 }
 
 function drawThermal(data) {
+  if (!thermalEnabled) {
+    setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
+    return;
+  }
+
   const { frame, rows, cols, max, min, avg, center, ok } = data;
 
   if (!ok) {
-    document.getElementById('thermal-live').style.display = 'none';
-    document.getElementById('thermal-off').style.display  = 'flex';
-    document.getElementById('thermal-badge').textContent  = 'Offline';
-    document.getElementById('thermal-badge').className    = 'badge b-muted';
     const msg = data.message || (
       data.reason === 'missing_dependencies'
         ? "Python thermal kutubxonalari o'rnatilmagan."
@@ -1654,8 +1659,7 @@ function drawThermal(data) {
         : 'MLX90640 ulanmagan yoki I2C ishlamayapti.'
     );
     const install = data.install ? `<br><code>${data.install}</code>` : '';
-    const offText = document.getElementById('thermal-off-text');
-    if (offText) offText.innerHTML = `${msg}${install}`;
+    setThermalOffUi(`${msg}${install}`, 'Offline');
     return;
   }
 
@@ -1700,7 +1704,49 @@ function drawThermal(data) {
   });
 }
 
+function setThermalOffUi(message, badgeText='Off') {
+  const live = document.getElementById('thermal-live');
+  const off = document.getElementById('thermal-off');
+  const badge = document.getElementById('thermal-badge');
+  const toggle = document.getElementById('thermal-toggle');
+  const offText = document.getElementById('thermal-off-text');
+
+  if (live) live.style.display = 'none';
+  if (off) off.style.display = 'flex';
+  if (badge) {
+    badge.textContent = badgeText;
+    badge.className = 'badge b-muted';
+  }
+  if (toggle) toggle.textContent = thermalEnabled ? 'Off' : 'On';
+  if (offText) offText.innerHTML = message;
+}
+
+function updateThermalToggle() {
+  const toggle = document.getElementById('thermal-toggle');
+  if (toggle) toggle.textContent = thermalEnabled ? 'Off' : 'On';
+}
+
+function toggleThermal() {
+  thermalEnabled = !thermalEnabled;
+  localStorage.setItem('uzmax_thermal_enabled', thermalEnabled ? '1' : '0');
+  updateThermalToggle();
+
+  if (thermalEnabled) {
+    thermalConnect();
+  } else {
+    if (thermalWS) {
+      try { thermalWS.onclose = null; thermalWS.close(); } catch {}
+      thermalWS = null;
+    }
+    setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
+  }
+}
+
 function thermalConnect() {
+  if (!thermalEnabled) {
+    setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
+    return;
+  }
   if (thermalWS) { try { thermalWS.close(); } catch{} }
   const p   = location.protocol==='https:' ? 'wss:' : 'ws:';
   thermalWS = new WebSocket(`${p}//${WS_ORIGIN}/ws/thermal`);
@@ -1709,6 +1755,7 @@ function thermalConnect() {
     try { drawThermal(JSON.parse(data)); } catch {}
   };
   thermalWS.onclose = () => {
+    if (!thermalEnabled) return;
     drawThermal({ ok:false });
     setTimeout(thermalConnect, 5000);
   };
