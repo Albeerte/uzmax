@@ -509,6 +509,8 @@ def _legacy_head_led_command(command: str) -> str | None:
         return "off"
     if upper == ["HEAD", "RAINBOW"]:
         return "rainbow"
+    if len(parts) == 3 and upper[:2] == ["HEAD", "BRIGHTNESS"]:
+        return f"brightness {parts[2]}"
     return None
 
 

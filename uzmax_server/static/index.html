@@ -786,23 +786,40 @@
         <div class="card-head"><span class="card-title">💡 LED Strip (84 LEDs)</span></div>
         <div class="card-body">
           <div class="led-row">
-            <div class="led-sw" style="background:#2563eb" onclick="led(37,99,235)"></div>
-            <div class="led-sw" style="background:#16a34a" onclick="led(22,163,74)"></div>
-            <div class="led-sw" style="background:#dc2626" onclick="led(220,38,38)"></div>
-            <div class="led-sw" style="background:#ea580c" onclick="led(234,88,12)"></div>
-            <div class="led-sw" style="background:#9333ea" onclick="led(147,51,234)"></div>
-            <div class="led-sw" style="background:#f8fafc;border-color:#cbd5e1;" onclick="led(248,250,252)"></div>
-            <div class="led-sw" style="background:#06b6d4" onclick="led(6,182,212)"></div>
+            <div class="led-sw" title="Blue" style="background:#0000ff" onclick="led(0,0,255)"></div>
+            <div class="led-sw" title="Green" style="background:#00ff00" onclick="led(0,255,0)"></div>
+            <div class="led-sw" title="Red" style="background:#ff0000" onclick="led(255,0,0)"></div>
+            <div class="led-sw" title="Yellow" style="background:#ffff00" onclick="led(255,255,0)"></div>
+            <div class="led-sw" title="Magenta" style="background:#ff00ff" onclick="led(255,0,255)"></div>
+            <div class="led-sw" title="White" style="background:#ffffff;border-color:#cbd5e1;" onclick="led(255,255,255)"></div>
+            <div class="led-sw" title="Cyan" style="background:#00ffff" onclick="led(0,255,255)"></div>
             <div class="led-sw" style="background:#1e293b;border-color:#64748b;" onclick="ledOff()">
               <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:#94a3b8;margin:auto;display:block;margin-top:7px;"><path d="M6 18L18 6M6 6l12 12"/></svg>
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
             <input type="color" id="led-pick" value="#2563eb"
               style="width:40px;height:34px;border:1px solid var(--border2);border-radius:7px;background:var(--surface);padding:2px;cursor:pointer;outline:none;">
             <button class="btn btn-blue btn-sm" onclick="sendLedPick()">📤 Send</button>
             <button class="btn btn-ghost btn-sm" onclick="ledRain()">🌈 Rainbow</button>
             <button class="btn btn-ghost btn-sm" onclick="ledOff()">⚫ Off</button>
+          </div>
+          <div class="srv-row">
+            <span class="srv-lbl">Brightness</span>
+            <input type="range" min="0" max="255" value="60" oninput="ledBrightness(this.value)">
+            <span class="srv-val" id="led-bright-val">60</span>
+          </div>
+          <div class="srv-row">
+            <span class="srv-lbl">Color order</span>
+            <select class="psel" id="led-order" onchange="ledOrder(this.value)" style="flex:1;">
+              <option value="RGB" selected>RGB</option>
+              <option value="GRB">GRB</option>
+              <option value="RBG">RBG</option>
+              <option value="GBR">GBR</option>
+              <option value="BRG">BRG</option>
+              <option value="BGR">BGR</option>
+            </select>
+            <span class="srv-val" style="width:44px">map</span>
           </div>
         </div>
       </div>
@@ -2026,6 +2043,17 @@ async function headStop() {
 // ── LED ───────────────────────────────────────────────────────
 async function led(r,g,b){
   const cmd=`HEAD LED ${r} ${g} ${b}`;
+  const res=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
+  addLog(cmd,(await res.json()).ok?'tx':'err');
+}
+async function ledBrightness(value){
+  document.getElementById('led-bright-val').textContent=value;
+  const cmd=`HEAD BRIGHTNESS ${value}`;
+  const res=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
+  addLog(cmd,(await res.json()).ok?'tx':'err');
+}
+async function ledOrder(order){
+  const cmd=`HEAD LED_ORDER ${order}`;
   const res=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
   addLog(cmd,(await res.json()).ok?'tx':'err');
 }
