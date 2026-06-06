@@ -11,7 +11,10 @@ Protocol for ESP32_HAND  (new firmware):
     L 6 120      → left servo #6 to 120°
 
 Protocol for ESP32_HEAD:
-    HEAD SERVO 1 90
+    HEAD LEFT 40
+    HEAD RIGHT 40
+    HEAD STOP
+    HEAD SERVO 90
     HEAD LED 255 0 0
     HEAD LED_OFF
     HEAD RAINBOW
@@ -509,6 +512,16 @@ def _legacy_head_led_command(command: str) -> str | None:
     return None
 
 
+def _normalize_head_command(command: str) -> str:
+    parts = command.strip().split()
+    upper = [part.upper() for part in parts]
+    if len(parts) == 4 and upper[:2] == ["HEAD", "SERVO"]:
+        # Old dashboard format was HEAD SERVO <servo_num> <angle>.
+        # Current HEAD firmware has one continuous/raw servo: HEAD SERVO <value>.
+        return f"HEAD SERVO {parts[3]}"
+    return command
+
+
 def _serial_disconnect(device: str):
     dev = _devices[device]
     with dev["lock"]:
@@ -863,12 +876,14 @@ async def hand_move(payload: dict):
 @app.post("/api/head/command")
 async def head_command(payload: dict):
     """
-    HEAD SERVO 1 90 / HEAD LED r g b / HEAD LED_OFF / HEAD RAINBOW
+    HEAD LEFT 40 / HEAD RIGHT 40 / HEAD STOP / HEAD SERVO 90
+    HEAD LED r g b / HEAD LED_OFF / HEAD RAINBOW
     Payload: {command: '...'}
     """
-    cmd = str(payload.get("command", "")).strip()
-    if not cmd:
+    requested = str(payload.get("command", "")).strip()
+    if not requested:
         return JSONResponse({"ok": False, "message": "Empty command"}, status_code=400)
+    cmd = _normalize_head_command(requested)
     ok, resp = await asyncio.to_thread(_serial_send, "head", cmd)
     fallback = _legacy_head_led_command(cmd)
     if fallback and (not ok or "UNKNOWN" in resp.upper()):
@@ -882,6 +897,7 @@ async def head_command(payload: dict):
             "connected": _serial_status("head")["connected"],
         })
     return JSONResponse({"ok": ok, "sent": cmd, "response": resp,
+                         "requested": requested if requested != cmd else None,
                          "connected": _serial_status("head")["connected"]})
 
 

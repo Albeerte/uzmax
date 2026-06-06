@@ -766,17 +766,17 @@
 
       <!-- Head servo -->
       <div class="card">
-        <div class="card-head"><span class="card-title">🧠 Head Servo</span></div>
-        <div class="srv-grid">
-          <div class="srv-row">
-            <span class="srv-lbl">Servo 1 (Pan)</span>
-            <input type="range" min="0" max="180" value="90" oninput="hs(1,this.value)">
-            <span class="srv-val" id="hs1">90</span>
+        <div class="card-head"><span class="card-title">🧠 Head Control</span><span id="head-st" style="font-size:.76rem;color:var(--muted)">Stopped</span></div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
+            <button class="btn btn-ghost" onpointerdown="headMove('LEFT')" onpointerup="headStop()" onpointercancel="headStop()" onmouseleave="headStop()">◀</button>
+            <button class="btn btn-red" onclick="headStop()">■</button>
+            <button class="btn btn-ghost" onpointerdown="headMove('RIGHT')" onpointerup="headStop()" onpointercancel="headStop()" onmouseleave="headStop()">▶</button>
           </div>
           <div class="srv-row">
-            <span class="srv-lbl">Servo 2 (Tilt)</span>
-            <input type="range" min="0" max="180" value="90" oninput="hs(2,this.value)">
-            <span class="srv-val" id="hs2">90</span>
+            <span class="srv-lbl">Head speed</span>
+            <input type="range" min="1" max="90" value="40" oninput="headSetSpeed(this.value)">
+            <span class="srv-val" id="head-speed-val">40</span>
           </div>
         </div>
       </div>
@@ -845,11 +845,11 @@
           <div class="custom-gesture-row" id="custom-gestures"></div>
           <div class="gesture-builder">
             <input id="gesture-name" class="inp" placeholder="Gesture name">
-            <textarea id="gesture-commands" class="inp inp-mono" placeholder="R 1 60&#10;R 2 120&#10;WAIT 250&#10;HEAD SERVO 1 90"></textarea>
+            <textarea id="gesture-commands" class="inp inp-mono" placeholder="R 1 60&#10;R 2 120&#10;WAIT 250&#10;HEAD LEFT 40&#10;WAIT 250&#10;HEAD STOP"></textarea>
             <button class="btn btn-blue btn-sm" onclick="saveCustomGesture()">Save</button>
           </div>
           <div class="gesture-help">
-            Commands: <code>R 1 90</code>, <code>L 6 0</code>, <code>HEAD LED 0 0 255</code>, <code>MOVE STOP</code>, <code>WAIT 300</code>.
+            Commands: <code>R 1 90</code>, <code>L 6 0</code>, <code>HEAD LEFT 40</code>, <code>HEAD STOP</code>, <code>HEAD LED 0 0 255</code>, <code>MOVE STOP</code>, <code>WAIT 300</code>.
           </div>
         </div>
       </div>
@@ -882,7 +882,7 @@
           </div>
           <div style="font-size:.7rem;color:var(--muted);line-height:1.7;">
             HAND: <code>R 1 90</code>  /  <code>L 6 0</code><br>
-            HEAD: <code>HEAD SERVO 1 90</code>  /  <code>HEAD LED 255 0 0</code><br>
+            HEAD: <code>HEAD LEFT 40</code> / <code>HEAD RIGHT 40</code> / <code>HEAD STOP</code> / <code>HEAD LED 255 0 0</code><br>
             MOVE: <code>MOVE SPEED 60</code> / <code>MOVE FWD</code> / <code>MOVE PING</code> / <code>MOVE STOP</code>
           </div>
         </div>
@@ -1767,7 +1767,7 @@ async function detectFace() {
 //  ROBOT — Serial ports
 // ═══════════════════════════════════════════════════════════════
 const DEVS = ['hand','head','move'];
-let curSpeed = 60, srvTimers = {}, htTimer = null;
+let curSpeed = 60, headSpeed = 40, srvTimers = {};
 const robotConnected = { hand:false, head:false, move:false };
 
 async function scanPorts() {
@@ -1994,13 +1994,32 @@ document.addEventListener('keyup',e=>{
 
 // ── Head ──────────────────────────────────────────────────────
 function hs(num,angle) {
-  document.getElementById('hs'+num).textContent=angle;
-  clearTimeout(htTimer);
-  htTimer=setTimeout(async()=>{
-    const cmd=`HEAD SERVO ${num} ${angle}`;
-    const r=await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
-    addLog(cmd,(await r.json()).ok?'tx':'err');
-  },130);
+  headSend(`HEAD SERVO ${angle}`, `HEAD SERVO ${angle}`);
+}
+
+function headSetSpeed(value) {
+  headSpeed = parseInt(value || 40);
+  document.getElementById('head-speed-val').textContent = headSpeed;
+}
+
+async function headSend(cmd, label=cmd) {
+  const r = await fetch('/api/head/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:cmd})});
+  const data = await r.json();
+  addLog(label, data.ok ? 'tx' : 'err');
+  return data;
+}
+
+async function headMove(dir) {
+  const cmd = `HEAD ${dir} ${headSpeed}`;
+  const st = document.getElementById('head-st');
+  if (st) st.textContent = dir === 'LEFT' ? 'Left' : 'Right';
+  await headSend(cmd);
+}
+
+async function headStop() {
+  const st = document.getElementById('head-st');
+  if (st) st.textContent = 'Stopped';
+  await headSend('HEAD STOP');
 }
 
 
@@ -2113,11 +2132,11 @@ async function runGestureSteps(steps, label){
 
 async function gesture(name){
   const acts={
-    hello:[ {e:'/api/head/command',b:{command:'HEAD SERVO 1 60'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:60}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
+    hello:[ {e:'/api/head/command',b:{command:'HEAD LEFT 40'}}, {wait:250}, {e:'/api/head/command',b:{command:'HEAD STOP'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:60}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
     open: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:175}}, {e:'/api/hand/move',b:{hand:'L',servo:1,angle:100}}, {e:'/api/hand/move',b:{hand:'L',servo:2,angle:10}} ],
     fist: [ ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'R',servo:s,angle:0}})), ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'L',servo:s,angle:0}})) ],
     wave: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:30}} ],
-    nod:  [ {e:'/api/head/command',b:{command:'HEAD SERVO 2 70'}} ],
+    nod:  [ {e:'/api/head/command',b:{command:'HEAD RIGHT 35'}}, {wait:220}, {e:'/api/head/command',b:{command:'HEAD STOP'}} ],
   };
   await runGestureSteps((acts[name]||[]).map(s=>({...s,label:name})), name);
   addLog('gesture: '+name,'ok');
