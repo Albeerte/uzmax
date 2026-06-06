@@ -312,11 +312,10 @@ PROJECT_ROOT        = Path(__file__).resolve().parent.parent
 ARDUINO_CLI_DEFAULT = Path(r"C:\Program Files\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe")
 ESP32_FQBN_DEFAULT  = os.getenv("ESP32_FQBN", "esp32:esp32:esp32")
 
-FIRMWARE_PACK_DIR = PROJECT_ROOT / "uzmax_robot" / "UZMAX_PRO_FIRMWARE"
 FIRMWARE_SKETCHES = {
-    "hand": FIRMWARE_PACK_DIR / "ESP32_HAND" / "ESP32_HAND.ino",
-    "head": FIRMWARE_PACK_DIR / "ESP32_HEAD" / "ESP32_HEAD.ino",
-    "move": FIRMWARE_PACK_DIR / "ESP32_MOVE" / "ESP32_MOVE.ino",
+    "hand": PROJECT_ROOT / "hand" / "hand.ino",
+    "head": PROJECT_ROOT / "head" / "head.ino",
+    "move": PROJECT_ROOT / "movements" / "move.ino",
 }
 FIRMWARE_VERSION_DIR = PROJECT_ROOT / "firmware_versions"
 
@@ -349,7 +348,24 @@ def _serial_error_message(port: str, exc: Exception) -> str:
     return raw
 
 
+def _serial_port_owner(port: str, exclude_device: str | None = None) -> str | None:
+    for name, dev in _devices.items():
+        if name == exclude_device:
+            continue
+        ser = dev.get("ser")
+        if dev.get("port") == port and ser is not None and ser.is_open:
+            return name
+    return None
+
+
 def _serial_connect(device: str, port: str) -> dict:
+    owner = _serial_port_owner(port, exclude_device=device)
+    if owner:
+        return {
+            "ok": False,
+            "message": f"{port} is already connected as {owner.upper()}. Disconnect it first.",
+        }
+
     dev = _devices[device]
     with dev["lock"]:
         if dev["ser"] and dev["ser"].is_open:
@@ -414,6 +430,19 @@ def _serial_auto_connect() -> dict:
                     matched = "hand"
 
             if not matched:
+                legacy_head_markers = (
+                    "DEVICE:HEAD",
+                    "HEAD READY",
+                    "LED SYSTEM READY",
+                    "SERVO TEST READY",
+                    "SEND ANGLE: 0 TO 180",
+                    "COMMANDS:",
+                    "RED, GREEN, BLUE, WHITE, OFF",
+                )
+                if any(marker in response.upper() for marker in legacy_head_markers):
+                    matched = "head"
+
+            if not matched:
                 ser.close()
                 continue
 
@@ -466,6 +495,18 @@ def _serial_send(device: str, command: str) -> tuple[bool, str]:
             logger.error("[SERIAL] %s lost: %s", device.upper(), exc)
             dev["ser"] = None
             return False, str(exc)
+
+
+def _legacy_head_led_command(command: str) -> str | None:
+    parts = command.strip().split()
+    upper = [part.upper() for part in parts]
+    if len(parts) == 5 and upper[:2] == ["HEAD", "LED"]:
+        return f"color {parts[2]} {parts[3]} {parts[4]}"
+    if upper == ["HEAD", "LED_OFF"]:
+        return "off"
+    if upper == ["HEAD", "RAINBOW"]:
+        return "rainbow"
+    return None
 
 
 def _serial_disconnect(device: str):
@@ -829,6 +870,17 @@ async def head_command(payload: dict):
     if not cmd:
         return JSONResponse({"ok": False, "message": "Empty command"}, status_code=400)
     ok, resp = await asyncio.to_thread(_serial_send, "head", cmd)
+    fallback = _legacy_head_led_command(cmd)
+    if fallback and (not ok or "UNKNOWN" in resp.upper()):
+        ok, resp = await asyncio.to_thread(_serial_send, "head", fallback)
+        return JSONResponse({
+            "ok": ok,
+            "sent": fallback,
+            "requested": cmd,
+            "response": resp,
+            "fallback": True,
+            "connected": _serial_status("head")["connected"],
+        })
     return JSONResponse({"ok": ok, "sent": cmd, "response": resp,
                          "connected": _serial_status("head")["connected"]})
 
