@@ -1616,7 +1616,7 @@ function downsampleTo16k(input, sourceRate) {
 //  THERMAL CAMERA  (WebSocket /ws/thermal)
 // ═══════════════════════════════════════════════════════════════
 let thermalWS  = null;
-let thermalEnabled = localStorage.getItem('uzmax_thermal_enabled') !== '0';
+let thermalEnabled = localStorage.getItem('uzmax_thermal_enabled') === '1';
 const TCANVAS  = document.getElementById('thermal-canvas');
 const TCTX     = TCANVAS.getContext('2d');
 
@@ -1726,18 +1726,40 @@ function updateThermalToggle() {
   if (toggle) toggle.textContent = thermalEnabled ? 'Off' : 'On';
 }
 
-function toggleThermal() {
+async function setServerThermalState(enabled) {
+  try {
+    await fetch('/api/thermal/state', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled})
+    });
+  } catch {}
+}
+
+async function toggleThermal() {
   thermalEnabled = !thermalEnabled;
   localStorage.setItem('uzmax_thermal_enabled', thermalEnabled ? '1' : '0');
   updateThermalToggle();
 
   if (thermalEnabled) {
+    await setServerThermalState(true);
     thermalConnect();
   } else {
+    await setServerThermalState(false);
     if (thermalWS) {
       try { thermalWS.onclose = null; thermalWS.close(); } catch {}
       thermalWS = null;
     }
+    setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
+  }
+}
+
+async function initThermalState() {
+  updateThermalToggle();
+  await setServerThermalState(thermalEnabled);
+  if (thermalEnabled) {
+    thermalConnect();
+  } else {
     setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
   }
 }
@@ -2350,7 +2372,7 @@ function clrLog(){ document.getElementById('log-box').innerHTML=''; }
 
 // ── BOOT ─────────────────────────────────────────────────────
 wsInit();
-thermalConnect();
+initThermalState();
 buildSettingsUI();
 loadSettings();
 renderCustomGestures();

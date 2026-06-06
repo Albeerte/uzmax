@@ -160,6 +160,7 @@ class ThermalCamera:
 
 _thermal = ThermalCamera()
 _remote_thermal = {"data": None, "updated_at": 0.0, "source": None}
+_thermal_runtime = {"enabled": False, "updated_at": 0.0}
 REMOTE_THERMAL_TTL_SECONDS = 8.0
 
 
@@ -186,9 +187,18 @@ def _normalize_thermal_payload(payload: dict, source: str = "raspberry_pi") -> d
 
 
 def _read_thermal_source() -> dict:
+    if not _thermal_runtime.get("enabled"):
+        return {
+            "ok": False,
+            "reason": "disabled",
+            "message": "Thermal camera is off. Turn it on from the dashboard.",
+            "enabled": False,
+        }
+
     local = _thermal.read()
     if local.get("ok"):
         local["source"] = "local_i2c"
+        local["enabled"] = True
         return local
 
     remote = _remote_thermal.get("data")
@@ -197,9 +207,11 @@ def _read_thermal_source() -> dict:
         data = dict(remote)
         data["source"] = _remote_thermal.get("source") or data.get("source") or "raspberry_pi"
         data["remote_age"] = round(remote_age, 2)
+        data["enabled"] = True
         return data
 
     data = dict(local)
+    data["enabled"] = True
     if remote:
         data["remote_reason"] = "stale"
         data["remote_age"] = round(remote_age, 2)
@@ -208,6 +220,18 @@ def _read_thermal_source() -> dict:
             "agent and point it at this server link."
         )
     return data
+
+
+def _set_thermal_enabled(enabled: bool) -> dict:
+    _thermal_runtime["enabled"] = bool(enabled)
+    _thermal_runtime["updated_at"] = time.time()
+    return {
+        "ok": True,
+        "enabled": _thermal_runtime["enabled"],
+        "hardware_ready": bool(_thermal.enabled),
+        "reason": None if _thermal.enabled else _thermal.reason,
+        "message": _thermal.message,
+    }
 
 # ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -1548,6 +1572,24 @@ async def thermal_snapshot():
     """Single frame from MLX90640. Always returns JSON even when disabled."""
     data = await asyncio.to_thread(_read_thermal_source)
     return JSONResponse(data)
+
+
+@app.get("/api/thermal/state")
+async def thermal_state():
+    return JSONResponse({
+        "ok": True,
+        "enabled": bool(_thermal_runtime.get("enabled")),
+        "hardware_ready": bool(_thermal.enabled),
+        "reason": None if _thermal.enabled else _thermal.reason,
+        "message": _thermal.message,
+    })
+
+
+@app.post("/api/thermal/state")
+async def thermal_set_state(payload: dict):
+    enabled = bool(payload.get("enabled"))
+    state = await asyncio.to_thread(_set_thermal_enabled, enabled)
+    return JSONResponse(state)
 
 
 @app.post("/api/thermal/push")
