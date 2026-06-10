@@ -225,6 +225,22 @@
       color:var(--muted);user-select:none;padding:0 1px;
     }
     .hand-ticks span{min-width:0;text-align:center;}
+    .hand-protractor{
+      width:100%;height:128px;border:1px solid var(--border);
+      border-radius:10px;background:#fff;overflow:hidden;cursor:pointer;
+      touch-action:none;
+    }
+    .hand-protractor svg{width:100%;height:100%;display:block;}
+    .pro-base{stroke:#94a3b8;stroke-width:1.4;}
+    .pro-arc{fill:none;stroke:#c084fc;stroke-width:1.2;}
+    .pro-range{fill:none;stroke:var(--green);stroke-width:4;stroke-linecap:round;}
+    .pro-tick{stroke:#9333ea;stroke-width:.8;}
+    .pro-tick.dim{stroke:#cbd5e1;}
+    .pro-label{font-size:7px;font-weight:800;fill:#7e22ce;text-anchor:middle;dominant-baseline:middle;}
+    .pro-label.dim{fill:#94a3b8;}
+    .pro-needle{stroke:#0284c7;stroke-width:4;stroke-linecap:round;}
+    .pro-dot{fill:#0284c7;stroke:#fff;stroke-width:2;}
+    .pro-center{fill:#fff;stroke:#ef4444;stroke-width:1.5;}
 
     /* ── VOICE HERO ────────────────────────────────────────── */
     .voice-hero{
@@ -2200,13 +2216,75 @@ function clampHandAngle(side,num,angle){
   return Math.max(mn, Math.min(mx, parseInt(angle)));
 }
 
-function handTicks(min,max){
-  const ticks=[];
-  const start=Math.ceil(min/10)*10;
-  if(min!==start) ticks.push(min);
-  for(let value=start; value<=max; value+=10) ticks.push(value);
-  if(ticks[ticks.length-1]!==max) ticks.push(max);
-  return ticks.map(value=>`<span>${value}</span>`).join('');
+function anglePoint(angle,r=92){
+  const rad=-angle*Math.PI/180;
+  return {x:120 + r*Math.cos(rad), y:110 + r*Math.sin(rad)};
+}
+
+function arcPath(min,max,r=78){
+  const a=anglePoint(min,r);
+  const b=anglePoint(max,r);
+  const large=max-min>180 ? 1 : 0;
+  return `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} A ${r} ${r} 0 ${large} 0 ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
+}
+
+function protractorTicks(min,max){
+  let html='';
+  for(let angle=0; angle<=180; angle+=10){
+    const outside=angle<min || angle>max;
+    const outer=anglePoint(angle,96);
+    const inner=anglePoint(angle,angle%30===0 ? 82 : 87);
+    const label=anglePoint(angle,70);
+    html+=`<line class="pro-tick ${outside?'dim':''}" x1="${outer.x.toFixed(1)}" y1="${outer.y.toFixed(1)}" x2="${inner.x.toFixed(1)}" y2="${inner.y.toFixed(1)}"></line>`;
+    html+=`<text class="pro-label ${outside?'dim':''}" x="${label.x.toFixed(1)}" y="${label.y.toFixed(1)}">${angle}</text>`;
+  }
+  return html;
+}
+
+function protractorSvg(id,angle,min,max){
+  const p=anglePoint(angle,74);
+  return `
+    <svg viewBox="0 0 240 128" aria-label="Servo angle protractor">
+      <path class="pro-arc" d="${arcPath(0,180,96)}"></path>
+      <path class="pro-range" d="${arcPath(min,max,78)}"></path>
+      ${protractorTicks(min,max)}
+      <line class="pro-base" x1="24" y1="110" x2="216" y2="110"></line>
+      <line class="pro-needle" id="${id}needle" x1="120" y1="110" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}"></line>
+      <circle class="pro-dot" id="${id}dot" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"></circle>
+      <circle class="pro-center" cx="120" cy="110" r="5"></circle>
+    </svg>`;
+}
+
+function setHandVisual(id,angle){
+  const value=document.getElementById(id+'v');
+  if(value) value.textContent=`${angle}°`;
+  const p=anglePoint(angle,74);
+  const needle=document.getElementById(id+'needle');
+  const dot=document.getElementById(id+'dot');
+  if(needle){
+    needle.setAttribute('x2',p.x.toFixed(1));
+    needle.setAttribute('y2',p.y.toFixed(1));
+  }
+  if(dot){
+    dot.setAttribute('cx',p.x.toFixed(1));
+    dot.setAttribute('cy',p.y.toFixed(1));
+  }
+}
+
+function angleFromProtractor(event,side,num){
+  const rect=event.currentTarget.getBoundingClientRect();
+  const x=(event.clientX-rect.left)*240/rect.width;
+  const y=(event.clientY-rect.top)*128/rect.height;
+  let angle=Math.atan2(110-y,x-120)*180/Math.PI;
+  angle=Math.max(0,Math.min(180,Math.round(angle/10)*10));
+  return clampHandAngle(side,num,angle);
+}
+
+function handProtractorPointer(event,side,num,id){
+  if(event.type==='pointermove' && !(event.buttons&1)) return;
+  event.preventDefault();
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  handSrv(side,num,angleFromProtractor(event,side,num),id);
 }
 
 function buildHand(id,side){
@@ -2223,9 +2301,11 @@ function buildHand(id,side){
           <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}<span class="srv-limit">${df[i-1]} home · ${mn}-${mx}</span></span>
           <span class="hand-degree" id="${k}v">${df[i-1]}°</span>
         </div>
-        <input type="range" id="${k}r" min="${mn}" max="${mx}" step="10" value="${df[i-1]}"
-          oninput="handSrv('${side}',${i},this.value,'${k}')">
-        <div class="hand-ticks">${handTicks(mn,mx)}</div>
+        <div class="hand-protractor" id="${k}p"
+          onpointerdown="handProtractorPointer(event,'${side}',${i},'${k}')"
+          onpointermove="handProtractorPointer(event,'${side}',${i},'${k}')">
+          ${protractorSvg(k,df[i-1],mn,mx)}
+        </div>
       </div>`;
   }
 }
@@ -2233,9 +2313,7 @@ buildHand('rhand','R'); buildHand('lhand','L');
 
 async function handSrv(side,num,angle,id){
   angle=clampHandAngle(side,num,angle);
-  const slider=document.getElementById(id+'r');
-  if(slider) slider.value=angle;
-  document.getElementById(id+'v').textContent=`${angle}°`;
+  setHandVisual(id,angle);
   clearTimeout(srvTimers[id]);
   srvTimers[id]=setTimeout(async()=>{
     const r=await fetch('/api/hand/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hand:side,servo:num,angle:parseInt(angle)})});
@@ -2248,8 +2326,7 @@ async function applyHandAngles(side,angles,label){
   for(let i=1;i<=6;i++){
     const k=`${side}${i}`;
     const angle=clampHandAngle(side,i,angles[i-1]);
-    document.getElementById(k+'r').value=angle;
-    document.getElementById(k+'v').textContent=`${angle}°`;
+    setHandVisual(k,angle);
     await fetch('/api/hand/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hand:side,servo:i,angle})});
     await new Promise(r=>setTimeout(r,60));
   }
