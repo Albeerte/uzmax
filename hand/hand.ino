@@ -30,19 +30,27 @@ HandServo servos[] = {
   // R1 starts at 90 and moves 90 -> 180.
   // R2 starts at 180 and moves 180 -> 0.
   // R3 starts at 90 and moves 90 -> 180.
-  // R4 starts at 0. Travel remains 0 -> 180 until a smaller safe limit is known.
+  // R4 starts at 0 and moves 0 -> 180.
+  // R5 starts at 0 and moves 0 -> 110.
+  // R6 starts at 0 and moves 0 -> 110.
   { Servo(), 'R', 1, 13,  90,  90, 180,  90 },
   { Servo(), 'R', 2, 12, 180,   0, 180, 180 },
   { Servo(), 'R', 3, 14,  90,  90, 180,  90 },
   { Servo(), 'R', 4, 27,   0,   0, 180,   0 },
-  { Servo(), 'R', 5, 26,   0,   0, 180,   0 },
-  { Servo(), 'R', 6, 25,  90,   0, 180,  90 },
+  { Servo(), 'R', 5, 26,   0,   0, 110,   0 },
+  { Servo(), 'R', 6, 25,   0,   0, 110,   0 },
 
-  { Servo(), 'L', 1, 33, 100,   0, 180, 100 },
-  { Servo(), 'L', 2, 32,  10,   0, 180,  10 },
-  { Servo(), 'L', 3, 23,  90,   0, 180,  90 },
+  // Left hand safe ranges:
+  // L1 starts at 100 and moves 100 -> 0.
+  // L2 starts at 0 and moves 0 -> 90.
+  // L3 starts at 90 and moves 90 -> 0.
+  // L4 starts at 0 and moves 0 -> 180.
+  // L5 starts at 90 and moves 90 -> 0.
+  { Servo(), 'L', 1, 33, 100,   0, 100, 100 },
+  { Servo(), 'L', 2, 32,   0,   0,  90,   0 },
+  { Servo(), 'L', 3, 23,  90,   0,  90,  90 },
   { Servo(), 'L', 4, 22,   0,   0, 180,   0 },
-  { Servo(), 'L', 5, 21,  90,   0, 180,  90 },
+  { Servo(), 'L', 5, 21,  90,   0,  90,  90 },
   { Servo(), 'L', 6, 19,  90,   0, 180,  90 }
 };
 

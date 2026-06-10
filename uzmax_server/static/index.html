@@ -205,7 +205,8 @@
     /* ── SERVO SLIDERS ─────────────────────────────────────── */
     .srv-grid{display:flex;flex-direction:column;gap:7px;padding:12px 16px;}
     .srv-row{display:flex;align-items:center;gap:10px;}
-    .srv-lbl{font-size:.74rem;width:100px;flex-shrink:0;color:var(--muted);font-weight:500;}
+    .srv-lbl{font-size:.74rem;width:124px;flex-shrink:0;color:var(--muted);font-weight:500;}
+    .srv-limit{display:block;font-size:.65rem;color:var(--muted);font-weight:600;margin-top:1px;}
     .srv-row input[type=range]{flex:1;accent-color:var(--brand);height:4px;}
     .srv-val{font-size:.79rem;font-weight:700;width:28px;text-align:right;color:var(--text2);}
 
@@ -832,6 +833,7 @@
         <div class="card-head">
           <span class="card-title">✋ Right Hand  R1–R6</span>
           <div style="display:flex;gap:6px;">
+            <button class="btn btn-blue btn-sm" onclick="homeHand('R')">Home</button>
             <button class="btn btn-ghost btn-sm" onclick="preset('R','open')">Open</button>
             <button class="btn btn-ghost btn-sm" onclick="preset('R','close')">Close</button>
           </div>
@@ -843,6 +845,7 @@
         <div class="card-head">
           <span class="card-title">🤚 Left Hand  L1–L6</span>
           <div style="display:flex;gap:6px;">
+            <button class="btn btn-blue btn-sm" onclick="homeHand('L')">Home</button>
             <button class="btn btn-ghost btn-sm" onclick="preset('L','open')">Open</button>
             <button class="btn btn-ghost btn-sm" onclick="preset('L','close')">Close</button>
           </div>
@@ -2170,10 +2173,10 @@ function sendLedPick(){
 
 // ── Hand sliders ──────────────────────────────────────────────
 const SNAMES=['Wrist Rot','Forearm','Elbow','Shoulder','Fingers','Thumb'];
-const HDEFS ={R:[90,180,90,0,0,90], L:[100,10,90,0,90,90]};
+const HDEFS ={R:[90,180,90,0,0,0], L:[100,0,90,0,90,90]};
 const HLIMS ={
-  R:[[90,180],[0,180],[90,180],[0,180],[0,180],[0,180]],
-  L:[[0,180],[0,180],[0,180],[0,180],[0,180],[0,180]]
+  R:[[90,180],[0,180],[90,180],[0,180],[0,110],[0,110]],
+  L:[[0,100],[0,90],[0,90],[0,180],[0,90],[0,180]]
 };
 
 function clampHandAngle(side,num,angle){
@@ -2191,7 +2194,7 @@ function buildHand(id,side){
     const [mn,mx]=limits[i-1];
     el.innerHTML+=`
       <div class="srv-row">
-        <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}</span>
+        <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}<span class="srv-limit">${df[i-1]} home · ${mn}-${mx}</span></span>
         <input type="range" id="${k}r" min="${mn}" max="${mx}" value="${df[i-1]}"
           oninput="handSrv('${side}',${i},this.value,'${k}')">
         <span class="srv-val" id="${k}v">${df[i-1]}</span>
@@ -2213,10 +2216,7 @@ async function handSrv(side,num,angle,id){
   },120);
 }
 
-async function preset(side,type){
-  const angles = type==='open'
-    ? (side==='R'?[90,180,90,0,0,90]:[100,10,90,0,90,90])
-    : (side==='R'?[0,0,0,180,180,0] :[0,180,180,180,0,0]);
+async function applyHandAngles(side,angles,label){
   for(let i=1;i<=6;i++){
     const k=`${side}${i}`;
     const angle=clampHandAngle(side,i,angles[i-1]);
@@ -2225,7 +2225,18 @@ async function preset(side,type){
     await fetch('/api/hand/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hand:side,servo:i,angle})});
     await new Promise(r=>setTimeout(r,60));
   }
-  addLog(`${side} ${type}`,'ok');
+  addLog(`${side} ${label}`,'ok');
+}
+
+async function homeHand(side){
+  await applyHandAngles(side,HDEFS[side],'home');
+}
+
+async function preset(side,type){
+  const angles = type==='open'
+    ? HDEFS[side]
+    : (side==='R'?[180,0,180,180,110,110] :[0,90,0,180,0,0]);
+  await applyHandAngles(side,angles,type);
 }
 
 
@@ -2272,8 +2283,8 @@ async function runGestureSteps(steps, label){
 
 async function gesture(name){
   const acts={
-    hello:[ {e:'/api/head/command',b:{command:'HEAD LEFT 40'}}, {wait:250}, {e:'/api/head/command',b:{command:'HEAD STOP'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:60}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
-    open: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:175}}, {e:'/api/hand/move',b:{hand:'L',servo:1,angle:100}}, {e:'/api/hand/move',b:{hand:'L',servo:2,angle:10}} ],
+    hello:[ {e:'/api/head/command',b:{command:'HEAD LEFT 40'}}, {wait:250}, {e:'/api/head/command',b:{command:'HEAD STOP'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
+    open: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:180}}, {e:'/api/hand/move',b:{hand:'L',servo:1,angle:100}}, {e:'/api/hand/move',b:{hand:'L',servo:2,angle:0}} ],
     fist: [ ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'R',servo:s,angle:0}})), ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'L',servo:s,angle:0}})) ],
     wave: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:30}} ],
     nod:  [ {e:'/api/head/command',b:{command:'HEAD RIGHT 35'}}, {wait:220}, {e:'/api/head/command',b:{command:'HEAD STOP'}} ],
