@@ -195,6 +195,24 @@ _thermal = ThermalCamera()
 _remote_thermal = {"data": None, "updated_at": 0.0, "source": None}
 _thermal_runtime = {"enabled": False, "updated_at": 0.0}
 REMOTE_THERMAL_TTL_SECONDS = 8.0
+HAND_SERVO_LIMITS = {
+    "R": {
+        1: (90, 180),
+        2: (0, 180),
+        3: (90, 180),
+        4: (0, 180),
+        5: (0, 180),
+        6: (0, 180),
+    },
+    "L": {
+        1: (0, 180),
+        2: (0, 180),
+        3: (0, 180),
+        4: (0, 180),
+        5: (0, 180),
+        6: (0, 180),
+    },
+}
 
 
 def _normalize_thermal_payload(payload: dict, source: str = "raspberry_pi") -> dict:
@@ -930,6 +948,9 @@ async def hand_move(payload: dict):
 
     if hand not in ("R", "L") or not (1 <= servo <= 6):
         return JSONResponse({"ok": False, "message": "Invalid hand or servo"}, status_code=400)
+
+    min_angle, max_angle = HAND_SERVO_LIMITS[hand][servo]
+    angle = max(min_angle, min(max_angle, angle))
 
     cmd = f"{hand} {servo} {angle}"
     ok, resp = await asyncio.to_thread(_serial_send, "hand", cmd)
