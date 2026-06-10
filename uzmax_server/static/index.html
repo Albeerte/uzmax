@@ -219,6 +219,12 @@
       border:1px solid #bae6fd;
     }
     .hand-row input[type=range]{width:100%;accent-color:var(--brand);height:4px;}
+    .hand-ticks{
+      display:flex;justify-content:space-between;gap:2px;
+      font-size:.56rem;font-weight:700;line-height:1;
+      color:var(--muted);user-select:none;padding:0 1px;
+    }
+    .hand-ticks span{min-width:0;text-align:center;}
 
     /* ── VOICE HERO ────────────────────────────────────────── */
     .voice-hero{
@@ -2194,6 +2200,15 @@ function clampHandAngle(side,num,angle){
   return Math.max(mn, Math.min(mx, parseInt(angle)));
 }
 
+function handTicks(min,max){
+  const ticks=[];
+  const start=Math.ceil(min/10)*10;
+  if(min!==start) ticks.push(min);
+  for(let value=start; value<=max; value+=10) ticks.push(value);
+  if(ticks[ticks.length-1]!==max) ticks.push(max);
+  return ticks.map(value=>`<span>${value}</span>`).join('');
+}
+
 function buildHand(id,side){
   const el=document.getElementById(id);
   const df=HDEFS[side];
@@ -2208,8 +2223,9 @@ function buildHand(id,side){
           <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}<span class="srv-limit">${df[i-1]} home · ${mn}-${mx}</span></span>
           <span class="hand-degree" id="${k}v">${df[i-1]}°</span>
         </div>
-        <input type="range" id="${k}r" min="${mn}" max="${mx}" value="${df[i-1]}"
+        <input type="range" id="${k}r" min="${mn}" max="${mx}" step="10" value="${df[i-1]}"
           oninput="handSrv('${side}',${i},this.value,'${k}')">
+        <div class="hand-ticks">${handTicks(mn,mx)}</div>
       </div>`;
   }
 }
