@@ -209,6 +209,16 @@
     .srv-limit{display:block;font-size:.65rem;color:var(--muted);font-weight:600;margin-top:1px;}
     .srv-row input[type=range]{flex:1;accent-color:var(--brand);height:4px;}
     .srv-val{font-size:.79rem;font-weight:700;width:28px;text-align:right;color:var(--text2);}
+    .hand-row{display:flex;flex-direction:column;gap:6px;padding:3px 0;}
+    .hand-meta{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;}
+    .hand-meta .srv-lbl{width:auto;}
+    .hand-degree{
+      min-width:48px;text-align:right;
+      font-size:.9rem;font-weight:900;color:var(--brand);
+      padding:2px 8px;border-radius:8px;background:var(--brand-lt);
+      border:1px solid #bae6fd;
+    }
+    .hand-row input[type=range]{width:100%;accent-color:var(--brand);height:4px;}
 
     /* ── VOICE HERO ────────────────────────────────────────── */
     .voice-hero{
@@ -2193,11 +2203,13 @@ function buildHand(id,side){
     const k=`${side}${i}`;
     const [mn,mx]=limits[i-1];
     el.innerHTML+=`
-      <div class="srv-row">
-        <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}<span class="srv-limit">${df[i-1]} home · ${mn}-${mx}</span></span>
+      <div class="hand-row">
+        <div class="hand-meta">
+          <span class="srv-lbl">${side}${i} ${SNAMES[i-1]}<span class="srv-limit">${df[i-1]} home · ${mn}-${mx}</span></span>
+          <span class="hand-degree" id="${k}v">${df[i-1]}°</span>
+        </div>
         <input type="range" id="${k}r" min="${mn}" max="${mx}" value="${df[i-1]}"
           oninput="handSrv('${side}',${i},this.value,'${k}')">
-        <span class="srv-val" id="${k}v">${df[i-1]}</span>
       </div>`;
   }
 }
@@ -2207,7 +2219,7 @@ async function handSrv(side,num,angle,id){
   angle=clampHandAngle(side,num,angle);
   const slider=document.getElementById(id+'r');
   if(slider) slider.value=angle;
-  document.getElementById(id+'v').textContent=angle;
+  document.getElementById(id+'v').textContent=`${angle}°`;
   clearTimeout(srvTimers[id]);
   srvTimers[id]=setTimeout(async()=>{
     const r=await fetch('/api/hand/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hand:side,servo:num,angle:parseInt(angle)})});
@@ -2221,7 +2233,7 @@ async function applyHandAngles(side,angles,label){
     const k=`${side}${i}`;
     const angle=clampHandAngle(side,i,angles[i-1]);
     document.getElementById(k+'r').value=angle;
-    document.getElementById(k+'v').textContent=angle;
+    document.getElementById(k+'v').textContent=`${angle}°`;
     await fetch('/api/hand/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hand:side,servo:i,angle})});
     await new Promise(r=>setTimeout(r,60));
   }
