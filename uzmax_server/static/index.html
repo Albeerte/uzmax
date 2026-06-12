@@ -971,12 +971,12 @@
             <input type="text" class="inp" placeholder="b1g…">
           </div>
           <div class="env-field">
-            <label>OPENROUTER_API_KEY</label>
-            <input type="password" class="inp" placeholder="sk-or-v1-…">
+            <label>OPENAI_API_KEY</label>
+            <input type="password" class="inp" placeholder="sk-…">
           </div>
           <div class="env-field">
-            <label>OPENROUTER_MODEL</label>
-            <input type="text" class="inp" placeholder="google/gemini-2.0-flash-exp:free">
+            <label>OPENAI_MODEL</label>
+            <input type="text" class="inp" placeholder="gpt-4o-mini">
           </div>
           <div class="env-field">
             <label>GEMINI_API_KEY (face embeddings)</label>
@@ -994,24 +994,24 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><span class="card-title">🤖 OpenRouter Free Models</span></div>
+      <div class="card-head"><span class="card-title">🤖 OpenAI Models</span></div>
       <div class="card-body">
         <div style="display:flex;flex-direction:column;gap:8px;font-size:.83rem;">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--muted-lt);border-radius:8px;border:1px solid var(--border);">
-            <code>google/gemini-2.0-flash-exp:free</code>
-            <span class="badge b-green">Free ✓</span>
+            <code>gpt-4o-mini</code>
+            <span class="badge b-green">Recommended</span>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--muted-lt);border-radius:8px;border:1px solid var(--border);">
-            <code>meta-llama/llama-3.1-8b-instruct:free</code>
-            <span class="badge b-green">Free ✓</span>
+            <code>gpt-4.1-mini</code>
+            <span class="badge b-blue">Higher quality</span>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--muted-lt);border-radius:8px;border:1px solid var(--border);">
-            <code>mistralai/mistral-7b-instruct:free</code>
-            <span class="badge b-green">Free ✓</span>
+            <code>gpt-4.1-nano</code>
+            <span class="badge b-blue">Fast</span>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:var(--muted-lt);border-radius:8px;border:1px solid var(--border);">
-            <code>anthropic/claude-3-haiku</code>
-            <span class="badge b-blue">Paid</span>
+            <code>OPENAI_MODEL</code>
+            <span class="badge b-blue">Editable</span>
           </div>
         </div>
       </div>
@@ -1059,14 +1059,10 @@ function showPage(name) {
 const SETTINGS_KEYS = [
   'YANDEX_API_KEY',
   'YANDEX_CATALOG_ID',
-  'OPENROUTER_API_KEY',
-  'OPENROUTER_MODEL',
   'OPENAI_API_KEY',
   'OPENAI_MODEL',
   'GEMINI_API_KEY',
   'FACE_MATCH_THRESHOLD',
-  'OPENROUTER_APP_NAME',
-  'OPENROUTER_SITE_URL',
   'ARDUINO_CLI_PATH',
   'ESP32_FQBN',
 ];
@@ -1115,14 +1111,10 @@ function buildSettingsUI(){
           <div class="env-grid">
             ${fieldHtml('YANDEX_API_KEY','Yandex SpeechKit API key','AQVN...', 'password')}
             ${fieldHtml('YANDEX_CATALOG_ID','Yandex catalog/folder ID','b1g...')}
-            ${fieldHtml('OPENROUTER_API_KEY','OpenRouter API key','sk-or-v1-...', 'password')}
-            ${fieldHtml('OPENROUTER_MODEL','OpenRouter GPT model','openai/gpt-4o-mini')}
-            ${fieldHtml('OPENAI_API_KEY','OpenAI API key fallback','sk-...', 'password')}
-            ${fieldHtml('OPENAI_MODEL','OpenAI fallback model','gpt-4o-mini')}
+            ${fieldHtml('OPENAI_API_KEY','OpenAI API key','sk-...', 'password')}
+            ${fieldHtml('OPENAI_MODEL','OpenAI chatbot model','gpt-4o-mini')}
             ${fieldHtml('GEMINI_API_KEY','Gemini API key for face embeddings','AIza...', 'password')}
             ${fieldHtml('FACE_MATCH_THRESHOLD','Face match threshold','0.62')}
-            ${fieldHtml('OPENROUTER_APP_NAME','OpenRouter app name','UzMAX')}
-            ${fieldHtml('OPENROUTER_SITE_URL','OpenRouter site URL','http://127.0.0.1:5000')}
             ${fieldHtml('ARDUINO_CLI_PATH','Arduino CLI path','C:\\\\Program Files\\\\Arduino IDE\\\\resources\\\\app\\\\lib\\\\backend\\\\resources\\\\arduino-cli.exe')}
             ${fieldHtml('ESP32_FQBN','ESP32 board FQBN','esp32:esp32:esp32')}
           </div>
@@ -1136,11 +1128,9 @@ function buildSettingsUI(){
       <div class="card">
         <div class="card-head"><span class="card-title">Quick model presets</span></div>
         <div class="card-body model-list">
-          ${modelRow('GPT 4o mini','OPENROUTER_MODEL','openai/gpt-4o-mini','Set')}
-          ${modelRow('GPT 4.1 mini','OPENROUTER_MODEL','openai/gpt-4.1-mini','Set')}
-          ${modelRow('Gemini Flash','OPENROUTER_MODEL','google/gemini-2.0-flash-001','Set')}
-          ${modelRow('Llama 3.1 free','OPENROUTER_MODEL','meta-llama/llama-3.1-8b-instruct:free','Set')}
-          ${modelRow('OpenAI fallback','OPENAI_MODEL','gpt-4o-mini','Set')}
+          ${modelRow('GPT 4o mini','OPENAI_MODEL','gpt-4o-mini','Set')}
+          ${modelRow('GPT 4.1 mini','OPENAI_MODEL','gpt-4.1-mini','Set')}
+          ${modelRow('GPT 4.1 nano','OPENAI_MODEL','gpt-4.1-nano','Set')}
         </div>
       </div>
 
@@ -1163,27 +1153,12 @@ function buildSettingsUI(){
             </div>
 
             <div class="guide-card">
-              <h3>OpenRouter chatbot</h3>
-              <ol>
-                <li>Sign in to OpenRouter.</li>
-                <li>Create an API key from the API Keys page.</li>
-                <li>Paste it into <code>OPENROUTER_API_KEY</code>.</li>
-                <li>Pick a model and paste its ID into <code>OPENROUTER_MODEL</code>.</li>
-              </ol>
-              <div class="guide-actions">
-                <a class="btn btn-ghost btn-sm" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">Create key</a>
-                <a class="btn btn-ghost btn-sm" href="https://openrouter.ai/docs/api-keys" target="_blank" rel="noopener">Docs</a>
-                <a class="btn btn-ghost btn-sm" href="https://openrouter.ai/models" target="_blank" rel="noopener">Models</a>
-              </div>
-            </div>
-
-            <div class="guide-card">
-              <h3>OpenAI fallback</h3>
+              <h3>OpenAI chatbot</h3>
               <ol>
                 <li>Open the OpenAI platform API keys page.</li>
                 <li>Create a new secret key.</li>
                 <li>Paste it into <code>OPENAI_API_KEY</code>.</li>
-                <li>Put a fallback model in <code>OPENAI_MODEL</code>, for example <code>gpt-4o-mini</code>.</li>
+                <li>Put a model in <code>OPENAI_MODEL</code>, for example <code>gpt-4o-mini</code>.</li>
               </ol>
               <div class="guide-actions">
                 <a class="btn btn-ghost btn-sm" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Create key</a>
@@ -1213,9 +1188,8 @@ function buildSettingsUI(){
         <div class="card-head"><span class="card-title">Local hardware notes</span></div>
         <div class="card-body">
           <div class="gesture-help">
-            Yandex keys power Uzbek STT/TTS. OpenRouter is the main chatbot LLM provider;
-            OpenAI is used only as fallback when OpenRouter is empty. Gemini is only for
-            face embeddings. After saving, new chat and face requests use the updated values.
+            Yandex keys power Uzbek STT/TTS. OpenAI is the chatbot LLM provider.
+            Gemini is only for face embeddings. After saving, new chat and face requests use the updated values.
           </div>
           <pre style="font-size:.78rem;background:var(--muted-lt);padding:12px;border-radius:8px;border:1px solid var(--border);overflow-x:auto;color:var(--text2);margin-top:10px;">RPi thermal setup:
 sudo raspi-config

@@ -2,7 +2,7 @@
 UzMAX — Unified Medical AI + Robot Control Server
 ===================================================
 Single FastAPI server that combines:
-  • Voice AI assistant  (Yandex STT/TTS + OpenRouter LLM)
+  • Voice AI assistant  (Yandex STT/TTS + OpenAI LLM)
   • Face recognition    (Gemini embeddings + Qdrant vector store)
   • ESP32 robot control (HAND / HEAD / MOVE via USB serial)
 
@@ -32,7 +32,7 @@ Run:
 .env keys needed:
     YANDEX_CATALOG_ID
     YANDEX_API_KEY
-    OPENROUTER_API_KEY   (or OPENAI_API_KEY)
+    OPENAI_API_KEY
     GEMINI_API_KEY       (for face embeddings)
 """
 
@@ -312,14 +312,10 @@ ENV_PATH             = Path(".env")
 SETTINGS_KEYS = [
     "YANDEX_API_KEY",
     "YANDEX_CATALOG_ID",
-    "OPENROUTER_API_KEY",
-    "OPENROUTER_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
     "GEMINI_API_KEY",
     "FACE_MATCH_THRESHOLD",
-    "OPENROUTER_APP_NAME",
-    "OPENROUTER_SITE_URL",
     "ARDUINO_CLI_PATH",
     "ESP32_FQBN",
 ]
