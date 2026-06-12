@@ -204,6 +204,43 @@ class FaceVectorStore:
             ],
         )
 
+    def update_metadata(self, person_id: str, metadata: dict) -> dict | None:
+        if not person_id or not self._collection_exists():
+            return None
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="person_id",
+                        match=models.MatchValue(value=person_id),
+                    )
+                ]
+            ),
+            limit=100,
+            with_payload=True,
+            with_vectors=True,
+        )
+        if not records:
+            return None
+
+        for point in records:
+            payload = point.payload or {}
+            payload["metadata"] = metadata or {}
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=[
+                    models.PointStruct(
+                        id=point.id,
+                        vector=point.vector,
+                        payload=payload,
+                    )
+                ],
+            )
+
+        return self.get_person(person_id)
+
     def get_person(self, person_id: str) -> dict | None:
         if not self._collection_exists():
             return None

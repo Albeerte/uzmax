@@ -1635,6 +1635,7 @@ function downsampleTo16k(input, sourceRate) {
 // ═══════════════════════════════════════════════════════════════
 let thermalWS  = null;
 let thermalEnabled = localStorage.getItem('uzmax_thermal_enabled') === '1';
+let latestThermalSnapshot = null;
 const TCANVAS  = document.getElementById('thermal-canvas');
 const TCTX     = TCANVAS.getContext('2d');
 
@@ -1686,6 +1687,15 @@ function drawThermal(data) {
   document.getElementById('thermal-off').style.display  = 'none';
   document.getElementById('thermal-badge').textContent  = `${max}°C`;
   document.getElementById('thermal-badge').className    = max > 37.5 ? 'badge b-red' : max > 35 ? 'badge b-orange' : 'badge b-blue';
+  latestThermalSnapshot = {
+    ok: true,
+    source: data.source || 'thermal',
+    max: Number(max),
+    min: Number(min),
+    avg: Number(avg),
+    center: Number(center),
+    timestamp: Date.now()
+  };
 
   // Draw 32×24 heatmap pixel by pixel
   TCANVAS.width  = cols;
@@ -1737,6 +1747,19 @@ function setThermalOffUi(message, badgeText='Off') {
   }
   if (toggle) toggle.textContent = thermalEnabled ? 'Off' : 'On';
   if (offText) offText.innerHTML = message;
+}
+
+function patientThermalPayload() {
+  if (!latestThermalSnapshot || !latestThermalSnapshot.ok) return null;
+  if (Date.now() - latestThermalSnapshot.timestamp > 15000) return null;
+  return {
+    ok: true,
+    source: latestThermalSnapshot.source,
+    max: latestThermalSnapshot.max,
+    min: latestThermalSnapshot.min,
+    avg: latestThermalSnapshot.avg,
+    center: latestThermalSnapshot.center
+  };
 }
 
 function updateThermalToggle() {
@@ -1850,14 +1873,19 @@ async function detectFace() {
         document.getElementById('p-name').textContent=p.full_name;
         document.getElementById('p-sub').textContent='Score: '+p.score;
         document.getElementById('p-avatar').textContent='😊';
-        ws && ws.send(JSON.stringify({type:'face_identity',person:p}));
+        ws && ws.send(JSON.stringify({type:'face_identity',person:p,thermal:patientThermalPayload()}));
       } else {
         badge.textContent='🔍 Noma\'lum'; badge.className='badge b-muted';
         row.style.display='flex';
         document.getElementById('p-name').textContent='Noma\'lum';
         document.getElementById('p-sub').textContent='Ro\'yxatdan o\'tkazilmagan';
         document.getElementById('p-avatar').textContent='👤';
-        ws && ws.send(JSON.stringify({type:'face_identity',person:null,pending_registration:{embedding:face.embedding,snapshot_path:face.snapshot_path}}));
+        ws && ws.send(JSON.stringify({
+          type:'face_identity',
+          person:null,
+          thermal:patientThermalPayload(),
+          pending_registration:{embedding:face.embedding,snapshot_path:face.snapshot_path}
+        }));
       }
     }
   } catch(e) { console.warn('Face error:',e); }

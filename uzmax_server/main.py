@@ -308,6 +308,30 @@ GEMINI_API_KEY       = configured_secret(os.getenv("GEMINI_API_KEY") or os.geten
 FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.62"))
 FACE_LOG_ALL         = os.getenv("FACE_LOG_ALL_COMPARISONS", "false").lower() == "true"
 ENV_PATH             = Path(".env")
+FEVER_THRESHOLD_C    = 37.5
+
+DOCTOR_DIRECTORY = [
+    {
+        "name": "Qabul shifokori",
+        "specialty": "dastlabki ko'rik",
+        "use_for": "yangi bemor, isitma, umumiy holatni baholash",
+    },
+    {
+        "name": "Infeksionist",
+        "specialty": "yuqumli kasalliklar",
+        "use_for": "isitma, yo'tal, tomoq og'rig'i, ich ketishi yoki infeksiya gumoni",
+    },
+    {
+        "name": "Pediatr",
+        "specialty": "bolalar shifokori",
+        "use_for": "18 yoshgacha bo'lgan bemorlar",
+    },
+    {
+        "name": "Laboratoriya",
+        "specialty": "tahlillar",
+        "use_for": "PZR, qon tahlili va boshqa tekshiruvlar",
+    },
+]
 
 SETTINGS_KEYS = [
     "YANDEX_API_KEY",
@@ -1079,6 +1103,56 @@ def get_face_store() -> FaceVectorStore:
     return face_store
 
 
+def compact_thermal_screening(thermal: dict | None = None) -> dict:
+    if not thermal:
+        thermal = _read_thermal_source()
+
+    now = datetime.now().isoformat(timespec="seconds")
+    if not thermal or not thermal.get("ok"):
+        return {
+            "time": now,
+            "ok": False,
+            "source": (thermal or {}).get("source"),
+            "reason": (thermal or {}).get("reason") or "thermal_unavailable",
+            "message": (thermal or {}).get("message") or "Thermal camera data is not available.",
+        }
+
+    max_temp = float(thermal.get("max") or 0)
+    center_temp = float(thermal.get("center") or max_temp)
+    return {
+        "time": now,
+        "ok": True,
+        "source": thermal.get("source") or "thermal",
+        "max_c": round(max_temp, 1),
+        "center_c": round(center_temp, 1),
+        "avg_c": round(float(thermal.get("avg") or center_temp), 1),
+        "min_c": round(float(thermal.get("min") or center_temp), 1),
+        "status": "fever_screening" if max_temp >= FEVER_THRESHOLD_C else "normal_screening",
+        "note": "Bu MLX90640 orqali dastlabki skrining, klinik tashxis emas.",
+    }
+
+
+def merge_patient_screening(metadata: dict | None, screening: dict) -> dict:
+    merged = dict(metadata or {})
+    screenings = list(merged.get("thermal_screenings") or [])
+    screenings.append(screening)
+    merged["thermal_screenings"] = screenings[-20:]
+    merged["last_thermal_screening"] = screening
+    merged["patient_type"] = "yuqumli_kasalliklar_shifoxonasi_bemori"
+    merged["registered_by"] = "UzMAX robot"
+    return merged
+
+
+def attach_screening_to_person(person: dict | None, thermal: dict | None) -> dict | None:
+    if not person or not person.get("person_id"):
+        return person
+
+    screening = compact_thermal_screening(thermal)
+    metadata = merge_patient_screening(person.get("metadata") or {}, screening)
+    updated = get_face_store().update_metadata(person["person_id"], metadata)
+    return updated or {**person, "metadata": metadata}
+
+
 def save_base64_image(image_data: str) -> str:
     if "," in image_data:
         _, image_data = image_data.split(",", 1)
@@ -1227,19 +1301,27 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
         lang_instr = "Speak only in Russian. Keep it natural, simple, spoken, and respectful."
 
     base = (
-        "Siz UzMAX robotining tibbiy yordamchi chatbotisiz. "
+        "Siz UzMAX robotisiz: yuqumli kasalliklar shifoxonasi uchun aqlli yordamchi. "
+        "Vazifangiz: kamerada bemorni ko'rganda salomlashish, yangi bemordan ism-familiyasini so'rash, "
+        "thermal kamera skriningini bemor raqamli kartasiga bog'lash va shifokorlar haqida yo'naltiruvchi ma'lumot berish. "
         "Loyiha: 'Yuqumli kasalliklar shifoxonasi uchun aqlli robot yaratish'. "
         "Rahbar: TATU, Azimov Bunyod Raximjonovich. "
         "Javoblar juda qisqa, jonli, do'stona va aniq bo'lsin. "
         "Odatda 1-2 qisqa gapdan oshmang. "
-        "Tibbiy javoblarda bu dastlabki skrining ekanini eslating va zarur bo'lsa shifokorga murojaat qilishni ayting. "
+        "Thermal natijani har doim dastlabki skrining deb ayting, tashxis qo'ymang. "
+        "Isitma yoki xavotirli belgi bo'lsa, qabul shifokori yoki infeksionistga yo'naltiring. "
+        f"Shifokorlar: {json.dumps(DOCTOR_DIRECTORY, ensure_ascii=False)}. "
         "Savol bersangiz, faqat bitta oddiy savol bering. "
         "Mehmonga hurmat bilan murojaat qiling. "
         f"{lang_instr}"
     )
 
     if onboarding:
-        return base + " Yangi odam bilan tanishyapsiz. Qisqa tanishing va ism-familiyasini so'rang."
+        return (
+            base
+            + " Yangi bemor bilan tanishyapsiz. Avval salom bering, o'zingizni UzMAX deb tanishtiring, "
+            + "keyin faqat ism-familiyasini so'rang."
+        )
 
     if current_person:
         full_name = f'{current_person.get("first_name", "")} {current_person.get("last_name", "")}'.strip()
@@ -1269,8 +1351,8 @@ def local_medical_fallback(user_text: str, current_person=None) -> str:
         return f"{name}harorat skrining natijasidir. Agar isitma, holsizlik yoki og'riq bo'lsa, shifokorga murojaat qiling."
     if any(word in q for word in ("yo'tal", "yotal", "cough", "tomoq", "gripp")):
         return f"{name}yo'tal yoki tomoq og'rig'i bo'lsa, niqob taqing, suyuqlik iching va shifokor ko'rigidan o'ting."
-    if any(word in q for word in ("doktor", "shifokor", "navbat", "qabul")):
-        return f"{name}qaysi shifokorga yozilmoqchisiz: terapevt, kardiolog yoki nevropatolog?"
+    if any(word in q for word in ("doktor", "shifokor", "navbat", "qabul", "infeksionist")):
+        return f"{name}avval qabul shifokori ko'radi. Isitma yoki infeksiya belgisi bo'lsa, infeksionistga yo'naltirilasiz."
     return f"{name}hozir cloud AI kaliti ishlamayapti, lekin men lokal rejimdaman. Savolingizni qisqaroq yozing."
 
 
@@ -1301,6 +1383,9 @@ async def websocket_endpoint(websocket: WebSocket):
     response_generation  = 0
     current_person       = None
     pending_registration = None
+    last_auto_greet_key  = None
+    last_auto_greet_at   = 0.0
+    last_screening_at    = {}
 
     def start_stt():
         nonlocal stt_session, partial_stt_task
@@ -1511,24 +1596,60 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({"type": "interrupt"})
 
                 elif msg_type == "face_identity":
-                    current_person       = msg.get("person")
-                    pending_registration = msg.get("pending_registration")
+                    incoming_person = msg.get("person")
+                    incoming_pending = msg.get("pending_registration")
+                    thermal_context = msg.get("thermal")
+
+                    if incoming_person:
+                        current_person = incoming_person
+                        pending_registration = None
+                        person_id = current_person.get("person_id")
+                        last_at = last_screening_at.get(person_id, 0)
+                        if person_id and time.time() - last_at > 45:
+                            try:
+                                current_person = attach_screening_to_person(current_person, thermal_context)
+                                last_screening_at[person_id] = time.time()
+                            except Exception as exc:
+                                logger.warning("Patient screening metadata update failed: %s", exc)
+                    elif incoming_pending:
+                        current_person = None
+                        if not pending_registration:
+                            pending_registration = incoming_pending
+                        elif incoming_pending.get("embedding"):
+                            pending_registration["embedding"] = incoming_pending["embedding"]
+                        if incoming_pending.get("snapshot_path"):
+                            pending_registration["snapshot_path"] = incoming_pending["snapshot_path"]
+                        pending_registration["thermal"] = thermal_context or pending_registration.get("thermal")
+                    else:
+                        current_person = None
+                        pending_registration = None
 
                     if not is_responding:
                         if current_person:
+                            full_name = current_person.get("full_name") or current_person.get("first_name", "")
                             greeting = (
-                                f"Oldingizda {current_person.get('first_name','').strip()} turibdi. "
-                                "Tanish odamdek iliq salomlashing va yordam taklif qiling."
+                                f"Oldingizda {full_name.strip()} turibdi. "
+                                "Uni ismi bilan qisqa salomlang, raqamli kartasi yangilanganini ayting va yordam taklif qiling."
                             )
+                            greet_key = current_person.get("person_id") or full_name
                         elif pending_registration:
                             greeting = (
-                                "Oldingizda yangi odam turibdi. Salomlashing va so'rang: "
-                                '"Keling, tanishib olaylik. Ismingiz va familiyangiz nima?"'
+                                "Oldingizda yangi bemor turibdi. Salom bering, UzMAX robot ekaningizni ayting va so'rang: "
+                                '"Keling, sizni raqamli ro\'yxatga olaman. Ismingiz va familiyangiz nima?"'
                             )
+                            greet_key = "unknown_patient"
                         else:
                             greeting = None
+                            greet_key = None
 
-                        if greeting:
+                        now = time.time()
+                        should_greet = bool(greeting) and (
+                            greet_key != last_auto_greet_key or now - last_auto_greet_at > 45
+                        )
+
+                        if should_greet:
+                            last_auto_greet_key = greet_key
+                            last_auto_greet_at = now
                             messages.append({"role": "user", "content": greeting})
                             response_generation += 1
                             active_response_task = asyncio.create_task(
@@ -1573,19 +1694,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     if pending_registration:
                         extracted = await llm.extract_person_name(final_text)
                         if extracted and extracted.get("is_confident"):
+                            metadata = merge_patient_screening(
+                                {},
+                                compact_thermal_screening(pending_registration.get("thermal")),
+                            )
                             current_person = get_face_store().register(
                                 embedding=pending_registration["embedding"],
                                 first_name=extracted.get("first_name", ""),
                                 last_name=extracted.get("last_name", ""),
                                 snapshot_path=pending_registration.get("snapshot_path"),
-                                metadata={},
+                                metadata=metadata,
                             )
                             pending_registration = None
                             await websocket.send_json({"type": "stt_final", "text": final_text})
                             messages.append({"role": "user", "content": final_text})
                             reg_prompt = (
                                 f"Endi siz bu odamni taniysiz: {current_person['full_name']}. "
-                                "Ismi bilan qisqa salomlashing."
+                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting."
                             )
                             messages.append({"role": "user", "content": reg_prompt})
                             response_generation += 1
