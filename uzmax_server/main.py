@@ -11,11 +11,12 @@ Protocol for ESP32_HAND  (new firmware):
     L 6 120      → left servo #6 to 120°
 
 Protocol for ESP32_HEAD:
-    HEAD LEFT 40
-    HEAD RIGHT 40
-    HEAD STOP
-    HEAD SERVO 90
-    HEAD NEUTRAL 90
+    HEAD LEFT 15       -> move head 15 degrees left
+    HEAD RIGHT 15      -> move head 15 degrees right
+    HEAD STOP          -> hold current angle
+    HEAD CENTER        -> move to 90 degrees
+    HEAD SERVO 90      -> set head angle 0..180
+    HEAD NEUTRAL 90    -> set custom neutral/angle 0..180
     HEAD LED 255 0 0
     HEAD LED_OFF
     HEAD RAINBOW
@@ -55,6 +56,10 @@ from datetime import datetime
 import serial
 import serial.tools.list_ports
 import numpy as np
+try:
+    import cv2
+except Exception:
+    cv2 = None
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -80,6 +85,7 @@ _THERMAL_IMPORT_ERROR = None
 THERMAL_INSTALL_COMMAND = (
     f"{sys.executable} -m pip install adafruit-circuitpython-mlx90640 adafruit-blinka"
 )
+_FACE_CASCADE = None
 
 
 def _try_import_thermal_hw() -> bool:
@@ -309,29 +315,156 @@ FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.62"))
 FACE_LOG_ALL         = os.getenv("FACE_LOG_ALL_COMPARISONS", "false").lower() == "true"
 ENV_PATH             = Path(".env")
 FEVER_THRESHOLD_C    = 37.5
+YANDEX_TTS_VOICE     = os.getenv("YANDEX_TTS_VOICE", "yulduz")
+YANDEX_TTS_VOICE_UZ  = os.getenv("YANDEX_TTS_VOICE_UZ", YANDEX_TTS_VOICE)
+YANDEX_TTS_VOICE_EN  = os.getenv("YANDEX_TTS_VOICE_EN", "john")
+YANDEX_TTS_VOICE_RU  = os.getenv("YANDEX_TTS_VOICE_RU", "yulduz_ru")
+YANDEX_TTS_SPEED     = float(os.getenv("YANDEX_TTS_SPEED", "1.1"))
+YANDEX_TTS_SAMPLE_RATE = int(os.getenv("YANDEX_TTS_SAMPLE_RATE", "48000"))
 
 DOCTOR_DIRECTORY = [
     {
+        "id": 1,
         "name": "Qabul shifokori",
         "specialty": "dastlabki ko'rik",
+        "speciality": "dastlabki ko'rik",
+        "room": "100-xona",
+        "work_time": "08:00 - 18:00",
         "use_for": "yangi bemor, isitma, umumiy holatni baholash",
+        "keywords": ["qabul", "umumiy", "bosh og'riq", "bosh og'rig'i", "holsizlik", "ko'rik", "shifokor", "doktor", "vrach", "navbat"],
     },
     {
+        "id": 2,
         "name": "Infeksionist",
         "specialty": "yuqumli kasalliklar",
+        "speciality": "yuqumli kasalliklar",
+        "room": "102-xona",
+        "work_time": "09:00 - 17:00",
         "use_for": "isitma, yo'tal, tomoq og'rig'i, ich ketishi yoki infeksiya gumoni",
+        "keywords": ["infeksionist", "isitma", "yo'tal", "yotal", "tomoq og'rig'i", "tomoq ogrigi", "gripp", "shamollash", "ich ketishi", "infeksiya", "yuqumli"],
     },
     {
+        "id": 3,
         "name": "Pediatr",
         "specialty": "bolalar shifokori",
+        "speciality": "bolalar shifokori",
+        "room": "104-xona",
+        "work_time": "09:00 - 15:00",
         "use_for": "18 yoshgacha bo'lgan bemorlar",
+        "keywords": ["pediatr", "bola", "bolam", "farzand", "chaqaloq"],
     },
     {
+        "id": 4,
         "name": "Laboratoriya",
         "specialty": "tahlillar",
+        "speciality": "tahlillar",
+        "room": "110-xona",
+        "work_time": "08:30 - 16:30",
         "use_for": "PZR, qon tahlili va boshqa tekshiruvlar",
+        "keywords": ["laboratoriya", "tahlil", "analiz", "qon", "pzr", "test"],
+    },
+    {
+        "id": 5,
+        "name": "Dr. Aliyev",
+        "specialty": "Terapevt",
+        "speciality": "Terapevt",
+        "room": "101-xona",
+        "work_time": "09:00 - 17:00",
+        "use_for": "isitma, yo'tal, holsizlik, shamollash, bosh og'rig'i va umumiy og'riqlar",
+        "keywords": ["terapevt", "isitma", "yo'tal", "yotal", "holsizlik", "gripp", "shamollash", "tomoq og'rig'i", "tomoq ogrigi", "bosh og'rig'i", "bosh ogrigi", "umumiy og'riq"],
+    },
+    {
+        "id": 6,
+        "name": "Dr. Karimova",
+        "specialty": "Kardiolog",
+        "speciality": "Kardiolog",
+        "room": "203-xona",
+        "work_time": "10:00 - 16:00",
+        "use_for": "yurak, ko'krak og'rig'i, qon bosimi, nafas qisishi va yurak urishi",
+        "keywords": ["kardiolog", "yurak", "ko'krak og'rig'i", "kokrak ogrigi", "qon bosimi", "bosim", "nafas qisishi", "taxikardiya", "yurak urishi"],
+    },
+    {
+        "id": 7,
+        "name": "Dr. Sobirov",
+        "specialty": "Nevrolog",
+        "speciality": "Nevrolog",
+        "room": "305-xona",
+        "work_time": "09:00 - 15:00",
+        "use_for": "bosh aylanishi, asab, qo'l-oyoq uvishishi, bel og'rig'i va migren",
+        "keywords": ["nevrolog", "bosh aylanishi", "asab", "qo'l uvishishi", "qol uvishishi", "oyoq uvishishi", "bel og'rig'i", "bel ogrigi", "migren", "hushdan ketish"],
+    },
+    {
+        "id": 8,
+        "name": "Dr. Rustamov",
+        "specialty": "LOR",
+        "speciality": "LOR",
+        "room": "108-xona",
+        "work_time": "08:30 - 14:00",
+        "use_for": "quloq, burun, tomoq, angina, burun bitishi va eshitish muammolari",
+        "keywords": ["lor", "quloq", "burun", "tomoq", "angina", "burun bitishi", "eshitish", "sinusit"],
+    },
+    {
+        "id": 9,
+        "name": "Dr. Saidova",
+        "specialty": "Gastroenterolog",
+        "speciality": "Gastroenterolog",
+        "room": "210-xona",
+        "work_time": "09:00 - 16:30",
+        "use_for": "qorin og'rig'i, oshqozon, ich ketishi, qabziyat, ko'ngil aynishi va hazm muammolari",
+        "keywords": ["gastroenterolog", "qorin og'rig'i", "qorin ogrigi", "oshqozon", "ich ketishi", "qabziyat", "ko'ngil aynishi", "kongil aynishi", "jigar", "hazm"],
     },
 ]
+
+DOCTOR_MULTILINGUAL_ALIASES = {
+    1: [
+        "doctor", "physician", "reception", "general checkup", "appointment", "queue",
+        "врач", "доктор", "прием", "очередь", "осмотр", "регистратура",
+    ],
+    2: [
+        "infectious disease", "infection", "fever", "cough", "flu", "sore throat", "diarrhea", "cold",
+        "инфекционист", "инфекция", "температура", "жар", "кашель", "грипп", "горло", "боль в горле", "понос", "простуда",
+    ],
+    3: [
+        "pediatrician", "child", "baby", "infant", "my child",
+        "педиатр", "ребенок", "ребёнок", "малыш", "детский врач",
+    ],
+    4: [
+        "laboratory", "lab", "analysis", "blood test", "pcr", "test",
+        "лаборатория", "анализ", "анализ крови", "пцр", "тест",
+    ],
+    5: [
+        "therapist", "general practitioner", "fever", "cough", "weakness", "cold", "headache", "body ache",
+        "терапевт", "температура", "кашель", "слабость", "простуда", "головная боль", "ломота",
+    ],
+    6: [
+        "cardiologist", "heart", "chest pain", "blood pressure", "pressure", "shortness of breath", "palpitations", "tachycardia",
+        "кардиолог", "сердце", "боль в груди", "давление", "одышка", "сердцебиение", "тахикардия",
+    ],
+    7: [
+        "neurologist", "dizziness", "nerve", "numbness", "hand numbness", "leg numbness", "back pain", "migraine", "fainting",
+        "невролог", "головокружение", "нервы", "онемение", "немеет рука", "немеет нога", "боль в спине", "мигрень", "обморок",
+    ],
+    8: [
+        "ent", "ear", "nose", "throat", "tonsillitis", "stuffy nose", "hearing", "sinusitis",
+        "лор", "ухо", "нос", "горло", "ангина", "заложен нос", "слух", "синусит",
+    ],
+    9: [
+        "gastroenterologist", "stomach pain", "abdominal pain", "stomach", "diarrhea", "constipation", "nausea", "liver", "digestion",
+        "гастроэнтеролог", "живот", "боль в животе", "желудок", "понос", "запор", "тошнота", "печень", "пищеварение",
+    ],
+}
+
+DOCTOR_SPECIALTY_LABELS = {
+    1: {"uz-UZ": "Qabul shifokori", "en-US": "Reception doctor", "ru-RU": "Врач первичного приема"},
+    2: {"uz-UZ": "Infeksionist", "en-US": "Infectious disease specialist", "ru-RU": "Инфекционист"},
+    3: {"uz-UZ": "Pediatr", "en-US": "Pediatrician", "ru-RU": "Педиатр"},
+    4: {"uz-UZ": "Laboratoriya", "en-US": "Laboratory", "ru-RU": "Лаборатория"},
+    5: {"uz-UZ": "Terapevt", "en-US": "Therapist", "ru-RU": "Терапевт"},
+    6: {"uz-UZ": "Kardiolog", "en-US": "Cardiologist", "ru-RU": "Кардиолог"},
+    7: {"uz-UZ": "Nevrolog", "en-US": "Neurologist", "ru-RU": "Невролог"},
+    8: {"uz-UZ": "LOR", "en-US": "ENT specialist", "ru-RU": "ЛОР"},
+    9: {"uz-UZ": "Gastroenterolog", "en-US": "Gastroenterologist", "ru-RU": "Гастроэнтеролог"},
+}
 
 SETTINGS_KEYS = [
     "YANDEX_API_KEY",
@@ -340,13 +473,30 @@ SETTINGS_KEYS = [
     "OPENAI_MODEL",
     "GEMINI_API_KEY",
     "FACE_MATCH_THRESHOLD",
+    "YANDEX_TTS_VOICE",
+    "YANDEX_TTS_VOICE_UZ",
+    "YANDEX_TTS_VOICE_EN",
+    "YANDEX_TTS_VOICE_RU",
+    "YANDEX_TTS_SPEED",
+    "YANDEX_TTS_SAMPLE_RATE",
     "ARDUINO_CLI_PATH",
     "ESP32_FQBN",
 ]
 
+SETTINGS_DEFAULTS = {
+    "OPENAI_MODEL": "gpt-4o-mini",
+    "FACE_MATCH_THRESHOLD": "0.62",
+    "YANDEX_TTS_VOICE": "yulduz",
+    "YANDEX_TTS_VOICE_UZ": "yulduz",
+    "YANDEX_TTS_VOICE_EN": "john",
+    "YANDEX_TTS_VOICE_RU": "yulduz_ru",
+    "YANDEX_TTS_SPEED": "1.1",
+    "YANDEX_TTS_SAMPLE_RATE": "48000",
+}
+
 
 def read_env_values() -> dict:
-    values = {key: os.getenv(key, "") for key in SETTINGS_KEYS}
+    values = {key: os.getenv(key, SETTINGS_DEFAULTS.get(key, "")) for key in SETTINGS_KEYS}
     if ENV_PATH.exists():
         for raw in ENV_PATH.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
@@ -407,9 +557,12 @@ app.add_middleware(
 
 os.makedirs("static", exist_ok=True)
 os.makedirs("images", exist_ok=True)
-REGISTER_FACES_DIR  = Path("data/register_faces")
+DATA_DIR            = Path("data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+REGISTER_FACES_DIR  = DATA_DIR / "register_faces"
 REGISTER_FACES_DIR.mkdir(parents=True, exist_ok=True)
 REGISTER_FACES_JSON = REGISTER_FACES_DIR / "registry.json"
+DOCTOR_QUEUE_FILE   = DATA_DIR / "doctor_queue.json"
 IMAGES_DIR          = Path("images")
 PROJECT_ROOT        = Path(__file__).resolve().parent.parent
 ARDUINO_CLI_DEFAULT = Path(r"C:\Program Files\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe")
@@ -619,7 +772,7 @@ def _normalize_head_command(command: str) -> str:
     upper = [part.upper() for part in parts]
     if len(parts) == 4 and upper[:2] == ["HEAD", "SERVO"]:
         # Old dashboard format was HEAD SERVO <servo_num> <angle>.
-        # Current HEAD firmware has one continuous/raw servo: HEAD SERVO <value>.
+        # Current HEAD firmware has one 180-degree positional servo: HEAD SERVO <angle>.
         return f"HEAD SERVO {parts[3]}"
     return command
 
@@ -981,7 +1134,7 @@ async def hand_move(payload: dict):
 @app.post("/api/head/command")
 async def head_command(payload: dict):
     """
-    HEAD LEFT 40 / HEAD RIGHT 40 / HEAD STOP / HEAD SERVO 90
+    HEAD LEFT 15 / HEAD RIGHT 15 / HEAD STOP / HEAD CENTER / HEAD SERVO 90
     HEAD LED r g b / HEAD LED_OFF / HEAD RAINBOW
     Payload: {command: '...'}
     """
@@ -1045,6 +1198,7 @@ async def get_settings():
 async def save_settings(payload: dict):
     """Persist dashboard settings to .env and refresh in-process config."""
     global FOLDER_ID, API_KEY, GEMINI_API_KEY, FACE_MATCH_THRESHOLD
+    global YANDEX_TTS_VOICE, YANDEX_TTS_SPEED, YANDEX_TTS_SAMPLE_RATE
     global face_encoder, face_store
 
     incoming = payload.get("settings", payload)
@@ -1060,6 +1214,16 @@ async def save_settings(payload: dict):
         threshold = float(values.get("FACE_MATCH_THRESHOLD") or "0.62")
     except ValueError:
         return JSONResponse({"ok": False, "message": "FACE_MATCH_THRESHOLD must be a number"}, status_code=400)
+    try:
+        tts_speed = float(values.get("YANDEX_TTS_SPEED") or "1.1")
+    except ValueError:
+        return JSONResponse({"ok": False, "message": "YANDEX_TTS_SPEED must be a number"}, status_code=400)
+    try:
+        tts_sample_rate = int(values.get("YANDEX_TTS_SAMPLE_RATE") or "48000")
+    except ValueError:
+        return JSONResponse({"ok": False, "message": "YANDEX_TTS_SAMPLE_RATE must be a number"}, status_code=400)
+    if tts_sample_rate not in (16000, 24000, 48000):
+        return JSONResponse({"ok": False, "message": "YANDEX_TTS_SAMPLE_RATE must be 16000, 24000, or 48000"}, status_code=400)
 
     write_env_values(values)
 
@@ -1073,6 +1237,9 @@ async def save_settings(payload: dict):
     API_KEY = configured_secret(values.get("YANDEX_API_KEY"))
     GEMINI_API_KEY = configured_secret(values.get("GEMINI_API_KEY"))
     FACE_MATCH_THRESHOLD = threshold
+    YANDEX_TTS_VOICE = values.get("YANDEX_TTS_VOICE") or "yulduz"
+    YANDEX_TTS_SPEED = tts_speed
+    YANDEX_TTS_SAMPLE_RATE = tts_sample_rate
 
     # These helpers read environment config when created, so recreate lazily.
     face_encoder = None
@@ -1153,14 +1320,590 @@ def attach_screening_to_person(person: dict | None, thermal: dict | None) -> dic
     return updated or {**person, "metadata": metadata}
 
 
-def save_base64_image(image_data: str) -> str:
+def latest_thermal_text(person: dict | None) -> str:
+    metadata = (person or {}).get("metadata") or {}
+    screening = metadata.get("last_thermal_screening") or {}
+    if not screening or not screening.get("ok"):
+        return "Harorat hozircha olinmadi."
+    max_temp = screening.get("max_c")
+    status = screening.get("status")
+    if max_temp is None:
+        return "Thermal skrining bor, lekin harorat raqami aniq emas."
+    note = "isitma ehtimoli bor" if status == "fever_screening" else "isitma belgisi yo'q"
+    return f"Thermal skrining: {float(max_temp):.1f}°C, {note}."
+
+
+def parse_person_name_locally(text: str) -> dict | None:
+    cleaned = re.sub(r"[^A-Za-zÀ-žА-Яа-яЁё'\-\s]", " ", text or "").strip()
+    if not cleaned:
+        return None
+    stop_words = {
+        "men", "meni", "mening", "ismim", "familiyam", "ism", "familiya",
+        "salom", "assalomu", "alaykum", "doktor", "shifokor", "bemor",
+        "is", "my", "name", "surname",
+    }
+    words = [w.strip("'-").capitalize() for w in cleaned.split() if w.strip("'-")]
+    names = [w for w in words if w.lower() not in stop_words and len(w) > 1]
+    if not names:
+        return None
+    return {
+        "first_name": names[0],
+        "last_name": names[1] if len(names) > 1 else "",
+        "is_confident": True,
+    }
+
+
+def extract_name_change(text: str) -> dict | None:
+    q = (text or "").strip()
+    low = q.lower()
+    triggers = (
+        "ismimni o'zgartir", "ismimni ozgartir", "ismimni o‘zgartir",
+        "ismimni almashtir", "ismimni yangila", "ismim boshqa",
+        "meni ", "deb saqla", "deb yoz", "ismim endi", "mening ismim endi",
+        "change my name", "update my name", "my name is now",
+        "измени имя", "поменяй имя", "меня зовут",
+    )
+    if not any(trigger in low for trigger in triggers):
+        return None
+
+    candidate = q
+    replacements = [
+        "ismimni o'zgartir", "ismimni ozgartir", "ismimni o‘zgartir",
+        "ismimni almashtir", "ismimni yangila", "ismim boshqa",
+        "mening ismim endi", "ismim endi", "meni", "deb saqla", "deb yoz",
+        "change my name to", "update my name to", "my name is now",
+        "измени имя на", "поменяй имя на", "меня зовут",
+    ]
+    for phrase in replacements:
+        candidate = re.sub(re.escape(phrase), " ", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"[:=,\-]+", " ", candidate).strip()
+    return parse_person_name_locally(candidate)
+
+
+def clean_patient_text(text: str) -> str:
+    cleaned = (text or "").lower()
+    cleaned = cleaned.replace("`", "'").replace("‘", "'").replace("’", "'")
+    cleaned = re.sub(r"[^\w\s'\-]", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def normalize_chat_lang(lang: str | None, text: str = "") -> str:
+    if lang in ("uz-UZ", "en-US", "ru-RU"):
+        return lang
+    if re.search(r"[А-Яа-яЁё]", text or ""):
+        return "ru-RU"
+    q = clean_patient_text(text)
+    english_markers = (
+        "hello", "hi", "doctor", "pain", "fever", "cough", "heart", "stomach",
+        "chest", "pressure", "dizzy", "nausea", "throat", "nose", "ear",
+    )
+    if any(marker in q for marker in english_markers):
+        return "en-US"
+    return "uz-UZ"
+
+
+def is_emergency_case(text: str) -> bool:
+    q = clean_patient_text(text)
+    emergency_keywords = [
+        "hushdan ketdim",
+        "hushdan ketish",
+        "nafas ololmayapman",
+        "nafas olmayapman",
+        "ko'kragim juda og'riyapti",
+        "kokragim juda ogrigyapti",
+        "qattiq qon ketmoqda",
+        "qon ketmoqda",
+        "insult",
+        "yurak xuruji",
+        "zaharlanish",
+        "og'ir jarohat",
+        "ogir jarohat",
+        "i fainted",
+        "fainting",
+        "i cannot breathe",
+        "can't breathe",
+        "severe chest pain",
+        "heavy bleeding",
+        "stroke",
+        "heart attack",
+        "poisoning",
+        "serious injury",
+        "я потерял сознание",
+        "я потеряла сознание",
+        "не могу дышать",
+        "сильная боль в груди",
+        "сильное кровотечение",
+        "инсульт",
+        "сердечный приступ",
+        "отравление",
+        "тяжелая травма",
+        "тяжёлая травма",
+    ]
+    return any(keyword in q for keyword in emergency_keywords)
+
+
+def doctor_router_retrieve(patient_text: str) -> tuple[dict | None, int, list[str]]:
+    q = clean_patient_text(patient_text)
+    if not q:
+        return None, 0, []
+
+    best_doctor = None
+    best_score = 0
+    best_matches = []
+
+    for doctor in DOCTOR_DIRECTORY:
+        score = 0
+        matches = []
+        searchable = [
+            doctor.get("name", ""),
+            doctor.get("specialty", ""),
+            doctor.get("speciality", ""),
+            doctor.get("use_for", ""),
+            *doctor.get("keywords", []),
+            *DOCTOR_MULTILINGUAL_ALIASES.get(doctor.get("id"), []),
+        ]
+        for keyword in searchable:
+            keyword_clean = clean_patient_text(keyword)
+            if not keyword_clean:
+                continue
+            if keyword_clean in q:
+                weight = 3 if keyword_clean in (
+                    clean_patient_text(doctor.get("name", "")),
+                    clean_patient_text(doctor.get("specialty", "")),
+                    clean_patient_text(doctor.get("speciality", "")),
+                ) else 1
+                if doctor.get("id") == 3 and keyword_clean in (
+                    "bola", "bolam", "farzand", "chaqaloq", "child", "baby", "infant",
+                    "my child", "ребенок", "ребёнок", "малыш",
+                ):
+                    weight += 4
+                score += weight
+                matches.append(keyword)
+        if score > best_score:
+            best_doctor = doctor
+            best_score = score
+            best_matches = matches
+
+    if best_doctor:
+        return best_doctor, best_score, best_matches
+
+    if any(word in q for word in (
+        "shifokor", "doktor", "vrach", "navbat", "qayerga boray", "kimga boray",
+        "doctor", "appointment", "queue", "where should i go", "which doctor",
+        "врач", "доктор", "очередь", "к какому врачу", "куда идти",
+    )):
+        return DOCTOR_DIRECTORY[0], 1, ["umumiy qabul"]
+
+    return None, 0, []
+
+
+def load_doctor_queue() -> list[dict]:
+    if not DOCTOR_QUEUE_FILE.exists():
+        return []
+    try:
+        data = json.loads(DOCTOR_QUEUE_FILE.read_text(encoding="utf-8"))
+        return list(data.get("queue") or [])
+    except Exception as exc:
+        logger.warning("Could not read doctor queue: %s", exc)
+        return []
+
+
+def save_doctor_queue(queue: list[dict]) -> None:
+    DOCTOR_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DOCTOR_QUEUE_FILE.write_text(
+        json.dumps({"queue": queue}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def patient_display_name(current_person: dict | None) -> str:
+    if not current_person:
+        return "Bemor"
+    full_name = (current_person.get("full_name") or "").strip()
+    if full_name:
+        return full_name
+    first = (current_person.get("first_name") or "").strip()
+    last = (current_person.get("last_name") or "").strip()
+    return f"{first} {last}".strip() or "Bemor"
+
+
+def doctor_specialty_label(doctor: dict, lang: str | None = None) -> str:
+    lang = normalize_chat_lang(lang)
+    labels = DOCTOR_SPECIALTY_LABELS.get(doctor.get("id"), {})
+    return labels.get(lang) or doctor.get("specialty") or doctor.get("speciality") or "Shifokor"
+
+
+def add_patient_to_doctor_queue(current_person: dict | None, doctor: dict) -> dict:
+    queue = load_doctor_queue()
+    today = datetime.now().strftime("%Y-%m-%d")
+    person_id = (current_person or {}).get("person_id") or ""
+    patient_name = patient_display_name(current_person)
+    metadata = (current_person or {}).get("metadata") or {}
+    patient_phone = metadata.get("phone") or metadata.get("patient_phone") or "Kiritilmagan"
+
+    for item in queue:
+        if (
+            item.get("date") == today
+            and item.get("doctor_id") == doctor.get("id")
+            and item.get("status") == "waiting"
+            and (
+                (person_id and item.get("person_id") == person_id)
+                or (not person_id and item.get("patient_name") == patient_name)
+            )
+        ):
+            return item
+
+    today_queue_for_doctor = [
+        item for item in queue
+        if item.get("doctor_id") == doctor.get("id") and item.get("date") == today
+    ]
+    queue_item = {
+        "queue_number": len(today_queue_for_doctor) + 1,
+        "person_id": person_id,
+        "patient_name": patient_name,
+        "patient_phone": patient_phone,
+        "doctor_id": doctor.get("id"),
+        "doctor_name": doctor.get("name"),
+        "specialty": doctor.get("specialty") or doctor.get("speciality"),
+        "room": doctor.get("room"),
+        "work_time": doctor.get("work_time"),
+        "date": today,
+        "status": "waiting",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    queue.append(queue_item)
+    save_doctor_queue(queue)
+    return queue_item
+
+
+def build_doctor_routing_result(text: str, current_person: dict | None, lang: str | None = None) -> dict | None:
+    if not (text or "").strip():
+        return None
+    lang = normalize_chat_lang(lang, text)
+
+    if is_emergency_case(text):
+        emergency_messages = {
+            "uz-UZ": (
+                "Assalomu alaykum. Sizda shoshilinch holat belgilari bo'lishi mumkin. "
+                "Iltimos, darhol navbatchi shifokorga murojaat qiling yoki 103 raqamiga qo'ng'iroq qiling."
+            ),
+            "en-US": (
+                "Hello. You may have signs of an emergency condition. "
+                "Please contact the duty doctor immediately or call 103."
+            ),
+            "ru-RU": (
+                "Здравствуйте. У вас могут быть признаки экстренного состояния. "
+                "Пожалуйста, срочно обратитесь к дежурному врачу или позвоните 103."
+            ),
+        }
+        return {
+            "status": "emergency",
+            "lang": lang,
+            "message": emergency_messages.get(lang, emergency_messages["uz-UZ"]),
+        }
+
+    doctor, score, matches = doctor_router_retrieve(text)
+    if not doctor:
+        return None
+
+    queue_item = add_patient_to_doctor_queue(current_person, doctor)
+    original_specialty = doctor.get("specialty") or doctor.get("speciality")
+    specialty = doctor_specialty_label(doctor, lang)
+    success_messages = {
+        "uz-UZ": f"Assalomu alaykum. Sizning shikoyatingiz bo'yicha {specialty} shifokoriga uchrashish tavsiya qilinadi.",
+        "en-US": f"Hello. Based on your complaint, a visit to a {specialty} specialist is recommended.",
+        "ru-RU": f"Здравствуйте. По вашей жалобе рекомендуется обратиться к специалисту: {specialty}.",
+    }
+    return {
+        "status": "success",
+        "lang": lang,
+        "message": success_messages.get(lang, success_messages["uz-UZ"]),
+        "doctor": {
+            "id": doctor.get("id"),
+            "name": doctor.get("name"),
+            "specialty": specialty,
+            "specialty_original": original_specialty,
+            "room": doctor.get("room"),
+            "work_time": doctor.get("work_time"),
+            "use_for": doctor.get("use_for"),
+        },
+        "queue": {
+            "number": queue_item.get("queue_number"),
+            "date": queue_item.get("date"),
+            "status": queue_item.get("status"),
+        },
+        "retrieval": {
+            "score": score,
+            "matches": matches[:6],
+        },
+    }
+
+
+def format_doctor_routing_reply(result: dict, current_person: dict | None = None, lang: str | None = None) -> str:
+    lang = normalize_chat_lang(lang or result.get("lang"), "")
+    if result.get("status") == "emergency":
+        return result["message"]
+
+    doctor = result["doctor"]
+    queue = result["queue"]
+    name = patient_display_name(current_person)
+    has_name = name and name != "Bemor"
+    if lang == "en-US":
+        patient_prefix = f"{name}, " if has_name else ""
+        return (
+            f"Hello. {patient_prefix}this is not a diagnosis, only guidance to the right doctor.\n\n"
+            f"Recommended specialist: {doctor['specialty']}.\n"
+            f"Doctor: {doctor['name']}\n"
+            f"Room: {doctor['room']}\n"
+            f"Working hours: {doctor['work_time']}\n"
+            f"Your queue number: {queue['number']}\n"
+            f"Date: {queue['date']}\n\n"
+            "Please go to the indicated room and wait for your turn."
+        )
+    if lang == "ru-RU":
+        patient_prefix = f"{name}, " if has_name else ""
+        return (
+            f"Здравствуйте. {patient_prefix}это не диагноз, а только направление к подходящему врачу.\n\n"
+            f"Рекомендуемый специалист: {doctor['specialty']}.\n"
+            f"Врач: {doctor['name']}\n"
+            f"Кабинет: {doctor['room']}\n"
+            f"Время работы: {doctor['work_time']}\n"
+            f"Ваш номер очереди: {queue['number']}\n"
+            f"Дата: {queue['date']}\n\n"
+            "Пожалуйста, пройдите в указанный кабинет и ожидайте своей очереди."
+        )
+    patient_prefix = "" if not has_name else f"{name}, "
+    return (
+        f"Assalomu alaykum. {patient_prefix}bu diagnostika emas, sizni to'g'ri shifokorga yo'naltirish uchun tavsiya.\n\n"
+        f"Sizga {doctor['specialty']} shifokori tavsiya qilinadi.\n"
+        f"Shifokor: {doctor['name']}\n"
+        f"Xona: {doctor['room']}\n"
+        f"Ish vaqti: {doctor['work_time']}\n"
+        f"Navbat raqamingiz: {queue['number']}\n"
+        f"Sana: {queue['date']}\n\n"
+        "Iltimos, belgilangan xonaga boring va navbatingizni kuting."
+    )
+
+
+def route_patient_request(text: str, current_person: dict | None, lang: str | None = None) -> str | None:
+    result = build_doctor_routing_result(text, current_person, lang)
+    if not result:
+        return None
+    return format_doctor_routing_reply(result, current_person, lang)
+
+
+def local_direct_response(user_text: str, current_person=None, lang: str | None = None) -> str | None:
+    q = clean_patient_text(user_text)
+    lang = normalize_chat_lang(lang, user_text)
+    routed = route_patient_request(user_text, current_person, lang)
+    if routed:
+        return routed
+    greetings = {
+        "uz-UZ": "Assalomu alaykum. Men UzMAX tibbiy yordamchiman. Sizni nima bezovta qilyapti?",
+        "en-US": "Hello. I am UzMAX medical assistant. What is bothering you?",
+        "ru-RU": "Здравствуйте. Я медицинский помощник UzMAX. Что вас беспокоит?",
+    }
+    if any(word in q for word in ("salom", "assalomu", "alaykum", "hello", "hi", "здравствуйте", "привет")):
+        return greetings.get(lang, greetings["uz-UZ"])
+    return None
+
+
+def append_patient_note(person: dict | None, text: str) -> dict | None:
+    if not person or not person.get("person_id") or not text.strip():
+        return person
+    metadata = person.get("metadata") or {}
+    notes = list(metadata.get("complaints") or [])
+    notes.append({
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "text": text.strip()[:500],
+    })
+    metadata["complaints"] = notes[-20:]
+    updated = get_face_store().update_metadata(person["person_id"], metadata)
+    return updated or {**person, "metadata": metadata}
+
+
+def decode_base64_image(image_data: str):
     if "," in image_data:
         _, image_data = image_data.split(",", 1)
     image_bytes = base64.b64decode(image_data)
+    if cv2 is None:
+        return image_bytes, None
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    return image_bytes, frame
+
+
+def detect_faces_in_base64(image_data: str) -> list[dict]:
+    global _FACE_CASCADE
+    if cv2 is None:
+        return []
+
+    _, frame = decode_base64_image(image_data)
+    if frame is None:
+        return []
+
+    if _FACE_CASCADE is None:
+        cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+        _FACE_CASCADE = cv2.CascadeClassifier(str(cascade_path))
+
+    if _FACE_CASCADE.empty():
+        return []
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = _FACE_CASCADE.detectMultiScale(
+        gray,
+        scaleFactor=1.2,
+        minNeighbors=5,
+        minSize=(60, 60),
+    )
+    return [
+        {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+        for (x, y, w, h) in faces
+    ]
+
+
+def crop_largest_face_base64(image_data: str, faces: list[dict]) -> str:
+    if cv2 is None or not faces:
+        return image_data
+
+    _, frame = decode_base64_image(image_data)
+    if frame is None:
+        return image_data
+
+    height, width = frame.shape[:2]
+    face = max(faces, key=lambda item: int(item.get("w", 0)) * int(item.get("h", 0)))
+    x = int(face.get("x", 0))
+    y = int(face.get("y", 0))
+    w = int(face.get("w", 0))
+    h = int(face.get("h", 0))
+    if w <= 0 or h <= 0:
+        return image_data
+
+    pad_x = int(w * 0.08)
+    pad_y = int(h * 0.10)
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+    x2 = min(width, x + w + pad_x)
+    y2 = min(height, y + h + pad_y)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return image_data
+
+    ok, encoded = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+    if not ok:
+        return image_data
+    return "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
+def save_base64_image(image_data: str) -> str:
+    image_bytes, _ = decode_base64_image(image_data)
+    for old_file in IMAGES_DIR.glob("face_*.jpg"):
+        try:
+            old_file.unlink()
+        except OSError:
+            logger.warning("Could not delete old face snapshot: %s", old_file)
     ts           = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     filename     = IMAGES_DIR / f"face_{ts}.jpg"
     filename.write_bytes(image_bytes)
     return str(filename)
+
+
+def persist_registered_face_snapshot(snapshot_path: str | None, person_id: str) -> str | None:
+    if not snapshot_path or not person_id:
+        return None
+    source = Path(snapshot_path)
+    if not source.exists():
+        logger.warning("Pending registration snapshot does not exist: %s", source)
+        return None
+    suffix = source.suffix or ".jpg"
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", person_id).strip("_") or "person"
+    target = REGISTER_FACES_DIR / f"{safe_id}{suffix}"
+    try:
+        shutil.copy2(source, target)
+        return str(target)
+    except OSError as exc:
+        logger.warning("Could not persist registered face snapshot %s: %s", source, exc)
+        return None
+
+
+def save_registration_pending_snapshot(image_data: str) -> str | None:
+    image_bytes, _ = decode_base64_image(image_data)
+    for old_file in sorted(REGISTER_FACES_DIR.glob("pending_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            old_file.unlink()
+        except OSError:
+            logger.warning("Could not delete old pending face snapshot: %s", old_file)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    filename = REGISTER_FACES_DIR / f"pending_{ts}.jpg"
+    try:
+        filename.write_bytes(image_bytes)
+        return str(filename)
+    except OSError as exc:
+        logger.warning("Could not save pending registration snapshot: %s", exc)
+        return None
+
+
+def upsert_registered_face_registry(person: dict, snapshot_path: str | None) -> None:
+    if not person or not person.get("person_id") or not snapshot_path:
+        return
+    snapshot = Path(snapshot_path).resolve()
+    register_dir = REGISTER_FACES_DIR.resolve()
+    if not snapshot.exists() or snapshot.parent != register_dir:
+        logger.warning("Registry write skipped because snapshot is not in register_faces: %s", snapshot)
+        return
+    file_name = snapshot.name
+    try:
+        data = json.loads(REGISTER_FACES_JSON.read_text(encoding="utf-8")) if REGISTER_FACES_JSON.exists() else {}
+    except Exception:
+        data = {}
+    faces = list(data.get("faces") or [])
+    entry = {
+        "person_id": person.get("person_id"),
+        "file": file_name,
+        "first_name": person.get("first_name", ""),
+        "last_name": person.get("last_name", ""),
+        "metadata": person.get("metadata") or {},
+        "registered_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    replaced = False
+    for idx, item in enumerate(faces):
+        if item.get("person_id") == entry["person_id"]:
+            faces[idx] = entry
+            replaced = True
+            break
+    if not replaced:
+        faces.append(entry)
+    REGISTER_FACES_JSON.write_text(json.dumps({"faces": faces}, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(
+        "Registered face written to registry.json: person_id=%s file=%s name=%s %s",
+        entry["person_id"],
+        entry["file"],
+        entry["first_name"],
+        entry["last_name"],
+    )
+
+
+def update_registered_face_registry_name(person: dict) -> None:
+    if not person or not person.get("person_id") or not REGISTER_FACES_JSON.exists():
+        return
+    try:
+        data = json.loads(REGISTER_FACES_JSON.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Could not read registry.json for name update: %s", exc)
+        return
+    faces = list(data.get("faces") or [])
+    changed = False
+    for item in faces:
+        if item.get("person_id") == person.get("person_id"):
+            item["first_name"] = person.get("first_name", "")
+            item["last_name"] = person.get("last_name", "")
+            item["metadata"] = person.get("metadata") or item.get("metadata") or {}
+            item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            changed = True
+            break
+    if changed:
+        REGISTER_FACES_JSON.write_text(json.dumps({"faces": faces}, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("Registry name updated: person_id=%s name=%s", person.get("person_id"), person.get("full_name"))
 
 
 def load_registered_faces() -> tuple[int, int]:
@@ -1248,9 +1991,14 @@ async def identify_faces(payload: dict):
         image_data = face.get("image")
         if not image_data:
             continue
+        detected_faces = detect_faces_in_base64(image_data)
+        if cv2 is not None and not detected_faces:
+            results.append({"status": "no_face", "faces": []})
+            continue
+        face_image_data = crop_largest_face_base64(image_data, detected_faces)
         try:
-            snapshot_path = save_base64_image(image_data)
-            embedding     = get_face_encoder().extract_embedding_from_base64(image_data)
+            snapshot_path = save_base64_image(face_image_data)
+            embedding     = get_face_encoder().extract_embedding_from_base64(face_image_data)
         except Exception:
             continue
 
@@ -1268,11 +2016,69 @@ async def identify_faces(payload: dict):
 
         if match and match.get("matched"):
             store.add_snapshot(match["person_id"], snapshot_path)
-            results.append({"status": "known", "snapshot_path": snapshot_path, "person": match})
+            results.append({
+                "status": "known",
+                "snapshot_path": snapshot_path,
+                "person": match,
+                "faces": detected_faces,
+            })
         else:
-            results.append({"status": "unknown", "snapshot_path": snapshot_path, "embedding": embedding})
+            pending_snapshot_path = save_registration_pending_snapshot(face_image_data) or snapshot_path
+            results.append({
+                "status": "unknown",
+                "snapshot_path": pending_snapshot_path,
+                "embedding": embedding,
+                "faces": detected_faces,
+            })
 
     return JSONResponse({"faces": results})
+
+
+@app.get("/api/doctor/directory")
+async def doctor_directory():
+    return JSONResponse({"ok": True, "doctors": DOCTOR_DIRECTORY})
+
+
+@app.get("/api/doctor/queue")
+async def doctor_queue():
+    return JSONResponse({"ok": True, "queue": load_doctor_queue()})
+
+
+@app.post("/api/doctor/route")
+async def doctor_route(payload: dict):
+    person = payload.get("person") if isinstance(payload.get("person"), dict) else None
+    patient_name = (payload.get("patient_name") or "").strip()
+    patient_phone = (payload.get("patient_phone") or "").strip()
+    if not person and (patient_name or patient_phone):
+        name_parts = patient_name.split()
+        person = {
+            "first_name": name_parts[0] if name_parts else patient_name,
+            "last_name": " ".join(name_parts[1:]) if len(name_parts) > 1 else "",
+            "full_name": patient_name or "Bemor",
+            "metadata": {"phone": patient_phone} if patient_phone else {},
+        }
+
+    patient_message = (payload.get("patient_message") or payload.get("message") or "").strip()
+    lang = normalize_chat_lang(payload.get("lang"), patient_message)
+    result = build_doctor_routing_result(patient_message, person, lang)
+    if not result:
+        no_match_messages = {
+            "uz-UZ": "Shikoyat bo'yicha aniq yo'nalish topilmadi. Qabul shifokoriga murojaat qiling.",
+            "en-US": "No clear route was found for this complaint. Please contact the reception doctor.",
+            "ru-RU": "По этой жалобе точное направление не найдено. Пожалуйста, обратитесь к врачу первичного приема.",
+        }
+        return JSONResponse({
+            "ok": False,
+            "status": "no_match",
+            "lang": lang,
+            "message": no_match_messages.get(lang, no_match_messages["uz-UZ"]),
+        })
+
+    return JSONResponse({
+        "ok": True,
+        **result,
+        "reply": format_doctor_routing_reply(result, person, lang),
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1302,13 +2108,18 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
 
     base = (
         "Siz UzMAX robotisiz: yuqumli kasalliklar shifoxonasi uchun aqlli yordamchi. "
-        "Vazifangiz: kamerada bemorni ko'rganda salomlashish, yangi bemordan ism-familiyasini so'rash, "
-        "thermal kamera skriningini bemor raqamli kartasiga bog'lash va shifokorlar haqida yo'naltiruvchi ma'lumot berish. "
+        "Vazifangiz: kamerada bemorni ko'rganda salomlashish, yangi bemordan faqat ismini so'rash, "
+        "thermal kamera skriningini bemor raqamli kartasiga bog'lash, bemordan nima bezovta qilayotganini so'rash "
+        "va kerakli shifokorga yo'naltirish. "
         "Loyiha: 'Yuqumli kasalliklar shifoxonasi uchun aqlli robot yaratish'. "
         "Rahbar: TATU, Azimov Bunyod Raximjonovich. "
         "Javoblar juda qisqa, jonli, do'stona va aniq bo'lsin. "
+        "Bemor shikoyatiga yo'naltirish javobini tanlangan tildagi salom bilan boshlang: "
+        "uzbekcha 'Assalomu alaykum', inglizcha 'Hello', ruscha 'Здравствуйте'. "
         "Odatda 1-2 qisqa gapdan oshmang. "
         "Thermal natijani har doim dastlabki skrining deb ayting, tashxis qo'ymang. "
+        "Bu diagnostika emasligini, faqat to'g'ri shifokorga yo'naltirish ekanini ayting. "
+        "Agar UzMAX routing natijasi berilsa, undagi shifokor, xona, ish vaqti va navbat raqamini o'zgartirmay ayting. "
         "Isitma yoki xavotirli belgi bo'lsa, qabul shifokori yoki infeksionistga yo'naltiring. "
         f"Shifokorlar: {json.dumps(DOCTOR_DIRECTORY, ensure_ascii=False)}. "
         "Savol bersangiz, faqat bitta oddiy savol bering. "
@@ -1320,7 +2131,8 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
         return (
             base
             + " Yangi bemor bilan tanishyapsiz. Avval salom bering, o'zingizni UzMAX deb tanishtiring, "
-            + "keyin faqat ism-familiyasini so'rang."
+            + "keyin faqat ismini so'rang. Familiya shart emas. Matn shunday mazmunda bo'lsin: "
+            + "Men yuqumli kasalliklar shifoxonasi uchun UzMAX robotman, iltimos ismingizni ayting."
         )
 
     if current_person:
@@ -1329,21 +2141,45 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
         meta_ctx  = f" Qo'shimcha ma'lumot: {json.dumps(metadata, ensure_ascii=False)}." if metadata else ""
         return (
             base
-            + f" Siz bu odamni taniysiz: {full_name}. Iliq salomlashing."
+            + f" Siz bu odamni taniysiz: {full_name}. Iliq salomlashing, thermal skrining holatini qisqa ayting "
+            + "va bitta savol bering: nima bezovta qilyapti?"
             + meta_ctx
         )
 
     return base
 
 
-def local_medical_fallback(user_text: str, current_person=None) -> str:
+def local_medical_fallback(user_text: str, current_person=None, lang: str | None = None) -> str:
     """Short offline fallback when the configured LLM provider is unavailable."""
     q = (user_text or "").lower()
+    lang = normalize_chat_lang(lang, user_text)
     name = ""
     if current_person:
         first = (current_person.get("first_name") or "").strip()
         if first:
             name = f"{first}, "
+
+    routed = route_patient_request(user_text, current_person, lang)
+    if routed:
+        return routed
+
+    if lang == "en-US":
+        if any(word in q for word in ("hello", "hi")):
+            return f"{name}hello. I am UzMAX medical assistant. How can I help you?"
+        if any(word in q for word in ("temperature", "fever")):
+            return f"{name}temperature is only a screening result. If you have fever, weakness, or pain, please see a doctor."
+        if any(word in q for word in ("cough", "throat", "flu")):
+            return f"{name}if you have cough or sore throat, wear a mask, drink fluids, and see a doctor."
+        return f"{name}the cloud AI key is not working right now, but I am in local mode. Please write your question more briefly."
+
+    if lang == "ru-RU":
+        if any(word in q for word in ("здравствуйте", "привет")):
+            return f"{name}здравствуйте. Я медицинский помощник UzMAX. Чем могу помочь?"
+        if any(word in q for word in ("температура", "жар")):
+            return f"{name}температура является только результатом скрининга. При жаре, слабости или боли обратитесь к врачу."
+        if any(word in q for word in ("кашель", "горло", "грипп")):
+            return f"{name}при кашле или боли в горле наденьте маску, пейте жидкость и пройдите осмотр врача."
+        return f"{name}сейчас cloud AI ключ не работает, но я работаю в локальном режиме. Напишите вопрос короче."
 
     if any(word in q for word in ("salom", "assalomu", "hello", "hi")):
         return f"{name}assalomu alaykum. Men UzMAX tibbiy yordamchiman. Sizga qanday yordam kerak?"
@@ -1368,7 +2204,7 @@ async def websocket_endpoint(websocket: WebSocket):
     loop = asyncio.get_running_loop()
 
     current_lang = "uz-UZ"
-    current_voice = "yulduz"
+    current_voice = YANDEX_TTS_VOICE_UZ
 
     stt_session      = None
     partial_stt_task = None
@@ -1448,6 +2284,79 @@ async def websocket_endpoint(websocket: WebSocket):
     messages = [{"role": "system",
                  "content": build_system_prompt(current_person, onboarding=False, current_lang=current_lang)}]
 
+    async def register_pending_person(name_text: str) -> tuple[dict | None, str | None]:
+        nonlocal current_person, pending_registration
+        if not pending_registration:
+            return None, None
+        try:
+            extracted = await llm.extract_person_name(name_text)
+        except Exception as exc:
+            logger.warning("Name extraction via LLM failed: %s", exc)
+            extracted = None
+        if not extracted:
+            extracted = parse_person_name_locally(name_text)
+        if not extracted or not extracted.get("is_confident") or not extracted.get("first_name"):
+            return None, "Ismni tushunmadim. Iltimos, faqat ismingizni ayting."
+
+        if not pending_registration.get("embedding") or not pending_registration.get("snapshot_path"):
+            logger.warning("Pending registration is missing embedding or snapshot_path: %s", pending_registration.keys())
+            return None, "Yuz rasmi tayyor emas. Iltimos, kameraga qarab qayta urinib ko'ring."
+
+        metadata = merge_patient_screening(
+            {},
+            compact_thermal_screening(pending_registration.get("thermal")),
+        )
+        current_person = get_face_store().register(
+            embedding=pending_registration["embedding"],
+            first_name=extracted.get("first_name", ""),
+            last_name=extracted.get("last_name", ""),
+            snapshot_path=pending_registration.get("snapshot_path"),
+            metadata=metadata,
+        )
+        permanent_snapshot = persist_registered_face_snapshot(
+            pending_registration.get("snapshot_path"),
+            current_person["person_id"],
+        )
+        if permanent_snapshot:
+            get_face_store().add_snapshot(current_person["person_id"], permanent_snapshot)
+            current_person["snapshots"] = [permanent_snapshot]
+            upsert_registered_face_registry(current_person, permanent_snapshot)
+            pending_path = Path(pending_registration.get("snapshot_path") or "")
+            permanent_path = Path(permanent_snapshot)
+            if pending_path.exists() and pending_path.name.startswith("pending_") and pending_path != permanent_path:
+                try:
+                    pending_path.unlink()
+                except OSError:
+                    logger.warning("Could not delete pending face snapshot: %s", pending_path)
+        else:
+            logger.warning(
+                "Face registered in vector DB but registry.json was not updated because no permanent snapshot was available: person_id=%s",
+                current_person["person_id"],
+            )
+            return current_person, "Yuz bazaga qo'shildi, lekin rasm registry.json ga yozilmadi."
+
+        pending_registration = None
+        return current_person, None
+
+    async def update_current_person_name(text: str) -> tuple[dict | None, str | None]:
+        nonlocal current_person
+        if not current_person or not current_person.get("person_id"):
+            return None, None
+        extracted = extract_name_change(text)
+        if not extracted or not extracted.get("first_name"):
+            return None, None
+
+        updated = get_face_store().update_name(
+            current_person["person_id"],
+            extracted.get("first_name", ""),
+            extracted.get("last_name", ""),
+        )
+        if not updated:
+            return None, "Ismni yangilay olmadim. Iltimos, yuzingiz tanilganidan keyin qayta urinib ko'ring."
+        current_person = updated
+        update_registered_face_registry_name(updated)
+        return updated, None
+
     async def process_response(user_text: str, generation: int):
         nonlocal is_responding, active_tts_session, active_response_task
         is_responding = True
@@ -1459,7 +2368,14 @@ async def websocket_endpoint(websocket: WebSocket):
         }
 
         tts_audio_queue = asyncio.Queue()
-        tts_session     = TtsStreamingSession(synthesizer, 1.1, 48000, loop, tts_audio_queue, current_voice)
+        tts_session = TtsStreamingSession(
+            synthesizer,
+            YANDEX_TTS_SPEED,
+            YANDEX_TTS_SAMPLE_RATE,
+            loop,
+            tts_audio_queue,
+            current_voice,
+        )
         active_tts_session = tts_session
         tts_session.start()
 
@@ -1480,7 +2396,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "tts_chunk",
                         "response_id": generation,
                         "encoding": "linear16",
-                        "sample_rate": 48000,
+                        "sample_rate": YANDEX_TTS_SAMPLE_RATE,
                         "audio": base64.b64encode(audio_chunk).decode("ascii"),
                     })
                 while not tts_audio_queue.empty():
@@ -1500,24 +2416,35 @@ async def websocket_endpoint(websocket: WebSocket):
         sentence_buf    = ""
 
         try:
-            async for llm_chunk in llm.get_response_stream(messages):
-                if response_cancelled.is_set() or generation != response_generation:
-                    break
-                full_llm_resp += llm_chunk
-                await websocket.send_json({"type": "llm_partial", "text": llm_chunk,
-                                           "response_id": generation})
-                sentence_buf += llm_chunk
-                sentence, sentence_buf = flush_sentence_buffer(sentence_buf)
-                if sentence:
-                    tts_session.feed(sentence)
+            direct_resp = local_direct_response(user_text, current_person, current_lang)
+            if direct_resp:
+                full_llm_resp = direct_resp
+                await websocket.send_json({
+                    "type": "llm_partial",
+                    "text": direct_resp,
+                    "response_id": generation,
+                })
+                if not response_cancelled.is_set() and generation == response_generation:
+                    tts_session.feed(direct_resp)
+            else:
+                async for llm_chunk in llm.get_response_stream(messages):
+                    if response_cancelled.is_set() or generation != response_generation:
+                        break
+                    full_llm_resp += llm_chunk
+                    await websocket.send_json({"type": "llm_partial", "text": llm_chunk,
+                                               "response_id": generation})
+                    sentence_buf += llm_chunk
+                    sentence, sentence_buf = flush_sentence_buffer(sentence_buf)
+                    if sentence:
+                        tts_session.feed(sentence)
 
-            if sentence_buf.strip() and not response_cancelled.is_set() and generation == response_generation:
-                tts_session.feed(sentence_buf.strip())
+                if sentence_buf.strip() and not response_cancelled.is_set() and generation == response_generation:
+                    tts_session.feed(sentence_buf.strip())
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error("LLM streaming error: %s", e)
-            error_text = local_medical_fallback(user_text, current_person)
+            error_text = local_medical_fallback(user_text, current_person, current_lang)
             if full_llm_resp:
                 error_text = "\n\n" + error_text
             full_llm_resp += error_text
@@ -1529,11 +2456,6 @@ async def websocket_endpoint(websocket: WebSocket):
             if not response_cancelled.is_set() and generation == response_generation:
                 tts_session.feed(error_text.strip())
 
-        try:
-            await tts_session.finish()
-        except (asyncio.CancelledError, Exception):
-            pass
-
         was_cancelled = response_cancelled.is_set() or generation != response_generation
         if full_llm_resp and not was_cancelled:
             messages.append({"role": "assistant", "content": full_llm_resp})
@@ -1544,7 +2466,19 @@ async def websocket_endpoint(websocket: WebSocket):
             })
 
         try:
-            await tts_task
+            await asyncio.wait_for(tts_session.finish(), timeout=20)
+        except asyncio.TimeoutError:
+            logger.warning("TTS finish timed out; continuing with text response")
+            tts_session.cancel()
+            if generation == response_generation and not response_cancelled.is_set():
+                await websocket.send_json({"type": "tts_end", "response_id": generation})
+        except (asyncio.CancelledError, Exception):
+            pass
+
+        try:
+            await asyncio.wait_for(tts_task, timeout=3)
+        except asyncio.TimeoutError:
+            tts_task.cancel()
         except asyncio.CancelledError:
             pass
 
@@ -1577,7 +2511,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if msg_type == "set_language":
                     current_lang = msg.get("lang", "uz-UZ")
-                    current_voice = {"uz-UZ": "yulduz", "en-US": "john"}.get(current_lang, "yulduz_ru")
+                    current_voice = {
+                        "uz-UZ": YANDEX_TTS_VOICE_UZ,
+                        "en-US": YANDEX_TTS_VOICE_EN,
+                        "ru-RU": YANDEX_TTS_VOICE_RU,
+                    }.get(current_lang, YANDEX_TTS_VOICE_UZ)
 
                 elif msg_type == "set_settings":
                     live_mode      = msg.get("live_mode", False)
@@ -1622,20 +2560,22 @@ async def websocket_endpoint(websocket: WebSocket):
                         pending_registration["thermal"] = thermal_context or pending_registration.get("thermal")
                     else:
                         current_person = None
-                        pending_registration = None
 
                     if not is_responding:
                         if current_person:
                             full_name = current_person.get("full_name") or current_person.get("first_name", "")
                             greeting = (
                                 f"Oldingizda {full_name.strip()} turibdi. "
-                                "Uni ismi bilan qisqa salomlang, raqamli kartasi yangilanganini ayting va yordam taklif qiling."
+                                f"{latest_thermal_text(current_person)} "
+                                "Uni ismi bilan qisqa salomlang, raqamli kartasi yangilanganini ayting va so'rang: "
+                                "sizni nima bezovta qilyapti?"
                             )
                             greet_key = current_person.get("person_id") or full_name
                         elif pending_registration:
                             greeting = (
-                                "Oldingizda yangi bemor turibdi. Salom bering, UzMAX robot ekaningizni ayting va so'rang: "
-                                '"Keling, sizni raqamli ro\'yxatga olaman. Ismingiz va familiyangiz nima?"'
+                                "Oldingizda yangi bemor turibdi. Salom bering va aynan shu mazmunda so'rang: "
+                                '"Men yuqumli kasalliklar shifoxonasi uchun UzMAX robotman. '
+                                "Iltimos, ismingizni ayting.\""
                             )
                             greet_key = "unknown_patient"
                         else:
@@ -1662,7 +2602,47 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                     if is_responding:
                         force_cancel_response()
-                    messages.append({"role": "user", "content": final_text})
+                    if pending_registration:
+                        registered_person, registration_error = await register_pending_person(final_text)
+                        if registration_error and registered_person is None:
+                            await websocket.send_json({"type": "chat_error", "message": registration_error})
+                            continue
+                        if registered_person:
+                            messages.append({"role": "user", "content": final_text})
+                            reg_prompt = (
+                                f"Endi siz bu odamni taniysiz: {registered_person['full_name']}. "
+                                f"{latest_thermal_text(registered_person)} "
+                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting "
+                                "va so'rang: sizni nima bezovta qilyapti?"
+                            )
+                            messages.append({"role": "user", "content": reg_prompt})
+                            response_generation += 1
+                            active_response_task = asyncio.create_task(
+                                process_response(reg_prompt, response_generation)
+                            )
+                            continue
+                    updated_person, update_error = await update_current_person_name(final_text)
+                    if update_error:
+                        await websocket.send_json({"type": "chat_error", "message": update_error})
+                        continue
+                    if updated_person:
+                        reply = f"Bemor ismi {updated_person['full_name']} deb yangilandi. Juda qisqa tasdiqlang."
+                        messages.append({"role": "user", "content": reply})
+                        response_generation += 1
+                        active_response_task = asyncio.create_task(
+                            process_response(reply, response_generation)
+                        )
+                        continue
+                    current_person = append_patient_note(current_person, final_text)
+                    routed = route_patient_request(final_text, current_person, current_lang)
+                    message_text = final_text
+                    if routed:
+                        message_text = (
+                            f"{final_text}\n\n"
+                            f"UzMAX routing natijasi: {routed}\n"
+                            "Bemorga shu yo'nalishni qisqa, aniq va hurmat bilan ayting."
+                        )
+                    messages.append({"role": "user", "content": message_text})
                     response_generation += 1
                     active_response_task = asyncio.create_task(
                         process_response(final_text, response_generation)
@@ -1692,25 +2672,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
 
                     if pending_registration:
-                        extracted = await llm.extract_person_name(final_text)
-                        if extracted and extracted.get("is_confident"):
-                            metadata = merge_patient_screening(
-                                {},
-                                compact_thermal_screening(pending_registration.get("thermal")),
-                            )
-                            current_person = get_face_store().register(
-                                embedding=pending_registration["embedding"],
-                                first_name=extracted.get("first_name", ""),
-                                last_name=extracted.get("last_name", ""),
-                                snapshot_path=pending_registration.get("snapshot_path"),
-                                metadata=metadata,
-                            )
-                            pending_registration = None
+                        registered_person, registration_error = await register_pending_person(final_text)
+                        if registration_error and registered_person is None:
+                            await websocket.send_json({"type": "chat_error", "message": registration_error})
+                            continue
+                        if registered_person:
                             await websocket.send_json({"type": "stt_final", "text": final_text})
                             messages.append({"role": "user", "content": final_text})
                             reg_prompt = (
-                                f"Endi siz bu odamni taniysiz: {current_person['full_name']}. "
-                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting."
+                                f"Endi siz bu odamni taniysiz: {registered_person['full_name']}. "
+                                f"{latest_thermal_text(registered_person)} "
+                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting "
+                                "va so'rang: sizni nima bezovta qilyapti?"
                             )
                             messages.append({"role": "user", "content": reg_prompt})
                             response_generation += 1
@@ -1719,11 +2692,34 @@ async def websocket_endpoint(websocket: WebSocket):
                             )
                             continue
 
+                    updated_person, update_error = await update_current_person_name(final_text)
+                    if update_error:
+                        await websocket.send_json({"type": "chat_error", "message": update_error})
+                        continue
+                    if updated_person:
+                        await websocket.send_json({"type": "stt_final", "text": final_text})
+                        reply = f"Bemor ismi {updated_person['full_name']} deb yangilandi. Juda qisqa tasdiqlang."
+                        messages.append({"role": "user", "content": reply})
+                        response_generation += 1
+                        active_response_task = asyncio.create_task(
+                            process_response(reply, response_generation)
+                        )
+                        continue
+
                     if is_responding:
                         force_cancel_response()
 
                     await websocket.send_json({"type": "stt_final", "text": final_text})
-                    messages.append({"role": "user", "content": final_text})
+                    current_person = append_patient_note(current_person, final_text)
+                    routed = route_patient_request(final_text, current_person, current_lang)
+                    message_text = final_text
+                    if routed:
+                        message_text = (
+                            f"{final_text}\n\n"
+                            f"UzMAX routing natijasi: {routed}\n"
+                            "Bemorga shu yo'nalishni qisqa, aniq va hurmat bilan ayting."
+                        )
+                    messages.append({"role": "user", "content": message_text})
                     response_generation += 1
                     active_response_task = asyncio.create_task(
                         process_response(final_text, response_generation)

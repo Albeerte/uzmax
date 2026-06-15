@@ -212,6 +212,53 @@
     .srv-limit{display:block;font-size:.65rem;color:var(--muted);font-weight:600;margin-top:1px;}
     .srv-row input[type=range]{flex:1;accent-color:var(--brand);height:4px;}
     .srv-val{font-size:.79rem;font-weight:700;width:28px;text-align:right;color:var(--text2);}
+    .head-gauge{
+      position:relative;
+      width:min(100%,280px);
+      height:128px;
+      margin:0 auto 12px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+      overflow:hidden;
+      touch-action:none;
+      cursor:pointer;
+    }
+    .head-gauge svg{display:block;width:100%;height:100%;}
+    .head-gauge .arc{fill:none;stroke:#94a3b8;stroke-width:1.2;}
+    .head-gauge .tick{stroke:#a855f7;stroke-width:1.4;stroke-linecap:round;}
+    .head-gauge .tick-major{stroke-width:1.7;}
+    .head-gauge .tick-label{
+      fill:#7c3aed;
+      font-size:9px;
+      font-weight:800;
+      text-anchor:middle;
+      dominant-baseline:middle;
+      user-select:none;
+    }
+    .head-gauge .needle{
+      stroke:#0284c7;
+      stroke-width:4;
+      stroke-linecap:round;
+      filter:drop-shadow(0 1px 1px rgba(2,132,199,.25));
+    }
+    .head-gauge .needle-dot{fill:#2563eb;stroke:#fff;stroke-width:2;}
+    .head-gauge .pivot{fill:#fff;stroke:#ef4444;stroke-width:2;}
+    .head-gauge .baseline{stroke:#cbd5e1;stroke-width:1.4;}
+    .head-gauge-value{
+      position:absolute;
+      left:50%;
+      top:48px;
+      transform:translateX(-50%);
+      padding:2px 8px;
+      border-radius:999px;
+      background:#eff6ff;
+      color:#0369a1;
+      border:1px solid #bfdbfe;
+      font-size:.78rem;
+      font-weight:900;
+      pointer-events:none;
+    }
     .hand-row{
       display:flex;flex-direction:column;gap:6px;
       min-width:0;padding:8px;border:1px solid var(--border);
@@ -811,26 +858,37 @@
 
       <!-- Head servo -->
       <div class="card">
-        <div class="card-head"><span class="card-title">🧠 Head Control</span><span id="head-st" style="font-size:.76rem;color:var(--muted)">Stopped</span></div>
+        <div class="card-head"><span class="card-title">🧠 Head 180° Servo</span><span id="head-st" style="font-size:.76rem;color:var(--muted)">90°</span></div>
         <div class="card-body">
+          <div class="head-gauge" id="head-gauge" aria-label="Head servo angle gauge">
+            <svg id="head-gauge-svg" viewBox="0 0 260 128" role="img" aria-label="0 to 180 degree head servo">
+              <path class="arc" d="M 24 112 A 106 106 0 0 1 236 112"></path>
+              <line class="baseline" x1="24" y1="112" x2="236" y2="112"></line>
+              <g id="head-gauge-ticks"></g>
+              <line class="needle" id="head-gauge-needle" x1="130" y1="112" x2="130" y2="28"></line>
+              <circle class="needle-dot" id="head-gauge-tip" cx="130" cy="28" r="6"></circle>
+              <circle class="pivot" cx="130" cy="112" r="6"></circle>
+            </svg>
+            <div class="head-gauge-value" id="head-gauge-value">90°</div>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">
-            <button class="btn btn-ghost" onpointerdown="headHold(event,'LEFT')" onpointerup="headRelease(event)" onpointercancel="headRelease(event)" onpointerleave="headRelease(event)">◀ Left</button>
-            <button class="btn btn-red" onclick="headStop()">■ Stop</button>
-            <button class="btn btn-ghost" onpointerdown="headHold(event,'RIGHT')" onpointerup="headRelease(event)" onpointercancel="headRelease(event)" onpointerleave="headRelease(event)">Right ▶</button>
+            <button class="btn btn-ghost" onclick="headStep('LEFT')">◀ Left</button>
+            <button class="btn btn-blue" onclick="headCenter()">Center</button>
+            <button class="btn btn-ghost" onclick="headStep('RIGHT')">Right ▶</button>
           </div>
           <div class="srv-row">
-            <span class="srv-lbl">Head speed</span>
-            <input type="range" min="1" max="90" value="40" oninput="headSetSpeed(this.value)">
-            <span class="srv-val" id="head-speed-val">40</span>
+            <span class="srv-lbl">Step</span>
+            <input type="range" min="1" max="45" value="15" oninput="headSetStep(this.value)">
+            <span class="srv-val" id="head-speed-val">15</span>
           </div>
           <div class="srv-row">
-            <span class="srv-lbl">Neutral</span>
-            <input type="range" min="70" max="110" value="90" oninput="headNeutral(this.value)">
+            <span class="srv-lbl">Center angle</span>
+            <input type="range" min="0" max="180" value="90" oninput="headNeutral(this.value)">
             <span class="srv-val" id="head-neutral-val">90</span>
           </div>
           <div class="srv-row">
-            <span class="srv-lbl">Raw servo</span>
-            <input type="range" min="0" max="180" value="90" oninput="headRaw(this.value)">
+            <span class="srv-lbl">Head angle</span>
+            <input id="head-angle-slider" type="range" min="0" max="180" value="90" oninput="headRaw(this.value)">
             <span class="srv-val" id="head-raw-val">90</span>
           </div>
         </div>
@@ -907,11 +965,11 @@
           <div class="custom-gesture-row" id="custom-gestures"></div>
           <div class="gesture-builder">
             <input id="gesture-name" class="inp" placeholder="Gesture name">
-            <textarea id="gesture-commands" class="inp inp-mono" placeholder="R 1 60&#10;R 2 120&#10;WAIT 250&#10;HEAD LEFT 40&#10;WAIT 250&#10;HEAD STOP"></textarea>
+            <textarea id="gesture-commands" class="inp inp-mono" placeholder="R 1 60&#10;R 2 120&#10;WAIT 250&#10;HEAD SERVO 60&#10;WAIT 250&#10;HEAD SERVO 90"></textarea>
             <button class="btn btn-blue btn-sm" onclick="saveCustomGesture()">Save</button>
           </div>
           <div class="gesture-help">
-            Commands: <code>R 1 90</code>, <code>L 6 0</code>, <code>HEAD LEFT 40</code>, <code>HEAD STOP</code>, <code>HEAD LED 0 0 255</code>, <code>MOVE STOP</code>, <code>WAIT 300</code>.
+            Commands: <code>R 1 90</code>, <code>L 6 0</code>, <code>HEAD SERVO 90</code>, <code>HEAD LED 0 0 255</code>, <code>MOVE STOP</code>, <code>WAIT 300</code>.
           </div>
         </div>
       </div>
@@ -944,7 +1002,7 @@
           </div>
           <div style="font-size:.7rem;color:var(--muted);line-height:1.7;">
             HAND: <code>R 1 90</code>  /  <code>L 6 0</code><br>
-            HEAD: <code>HEAD LEFT 40</code> / <code>HEAD RIGHT 40</code> / <code>HEAD STOP</code> / <code>HEAD LED 255 0 0</code><br>
+            HEAD: <code>HEAD SERVO 90</code> / <code>HEAD CENTER</code> / <code>HEAD LED 255 0 0</code><br>
             MOVE: <code>MOVE SPEED 60</code> / <code>MOVE FWD</code> / <code>MOVE PING</code> / <code>MOVE STOP</code>
           </div>
         </div>
@@ -1063,6 +1121,12 @@ const SETTINGS_KEYS = [
   'OPENAI_MODEL',
   'GEMINI_API_KEY',
   'FACE_MATCH_THRESHOLD',
+  'YANDEX_TTS_VOICE',
+  'YANDEX_TTS_VOICE_UZ',
+  'YANDEX_TTS_VOICE_EN',
+  'YANDEX_TTS_VOICE_RU',
+  'YANDEX_TTS_SPEED',
+  'YANDEX_TTS_SAMPLE_RATE',
   'ARDUINO_CLI_PATH',
   'ESP32_FQBN',
 ];
@@ -1115,6 +1179,12 @@ function buildSettingsUI(){
             ${fieldHtml('OPENAI_MODEL','OpenAI chatbot model','gpt-4o-mini')}
             ${fieldHtml('GEMINI_API_KEY','Gemini API key for face embeddings','AIza...', 'password')}
             ${fieldHtml('FACE_MATCH_THRESHOLD','Face match threshold','0.62')}
+            ${fieldHtml('YANDEX_TTS_VOICE','Yandex default TTS voice','yulduz')}
+            ${fieldHtml('YANDEX_TTS_VOICE_UZ','Yandex Uzbek TTS voice','yulduz')}
+            ${fieldHtml('YANDEX_TTS_VOICE_EN','Yandex English TTS voice','john')}
+            ${fieldHtml('YANDEX_TTS_VOICE_RU','Yandex Russian TTS voice','yulduz_ru')}
+            ${fieldHtml('YANDEX_TTS_SPEED','Yandex TTS speed','1.1')}
+            ${fieldHtml('YANDEX_TTS_SAMPLE_RATE','Yandex TTS sample rate','48000')}
             ${fieldHtml('ARDUINO_CLI_PATH','Arduino CLI path','C:\\\\Program Files\\\\Arduino IDE\\\\resources\\\\app\\\\lib\\\\backend\\\\resources\\\\arduino-cli.exe')}
             ${fieldHtml('ESP32_FQBN','ESP32 board FQBN','esp32:esp32:esp32')}
           </div>
@@ -1131,6 +1201,9 @@ function buildSettingsUI(){
           ${modelRow('GPT 4o mini','OPENAI_MODEL','gpt-4o-mini','Set')}
           ${modelRow('GPT 4.1 mini','OPENAI_MODEL','gpt-4.1-mini','Set')}
           ${modelRow('GPT 4.1 nano','OPENAI_MODEL','gpt-4.1-nano','Set')}
+          ${modelRow('Uzbek female','YANDEX_TTS_VOICE','yulduz','Voice')}
+          ${modelRow('Uzbek female','YANDEX_TTS_VOICE','nigora','Voice')}
+          ${modelRow('Uzbek female','YANDEX_TTS_VOICE','zamira','Voice')}
         </div>
       </div>
 
@@ -1145,6 +1218,7 @@ function buildSettingsUI(){
                 <li>Enable SpeechKit access and create an API key.</li>
                 <li>Copy the API key into <code>YANDEX_API_KEY</code>.</li>
                 <li>Copy the folder ID into <code>YANDEX_CATALOG_ID</code>.</li>
+                <li>Use <code>YANDEX_TTS_VOICE</code> for Uzbek chatbot speech.</li>
               </ol>
               <div class="guide-actions">
                 <a class="btn btn-ghost btn-sm" href="https://yandex.cloud/en/docs/speechkit/concepts/auth" target="_blank" rel="noopener">SpeechKit auth</a>
@@ -1190,6 +1264,7 @@ function buildSettingsUI(){
           <div class="gesture-help">
             Yandex keys power Uzbek STT/TTS. OpenAI is the chatbot LLM provider.
             Gemini is only for face embeddings. After saving, new chat and face requests use the updated values.
+            Uzbek TTS defaults to <code>yulduz</code>; <code>nigora</code> and <code>zamira</code> are available presets.
           </div>
           <pre style="font-size:.78rem;background:var(--muted-lt);padding:12px;border-radius:8px;border:1px solid var(--border);overflow-x:auto;color:var(--text2);margin-top:10px;">RPi thermal setup:
 sudo raspi-config
@@ -1263,6 +1338,7 @@ let liveMode = false, allowInterrupt = false;
 let sttReady = false, sttReadyTimer = null, pendingAutoListen = false, ttsStreamEnded = false;
 let llmStreamDone = false, responseTextCommitted = false;
 let activeAudioSources = [];
+let playbackNextAt = 0;
 let heardSpeech = false, speechMs = 0, silenceMs = 0, recStartedAt = 0;
 
 const VAD_START = 0.012;
@@ -1344,10 +1420,8 @@ function wsInit() {
             stream.textContent = m.text;
           }
           llmStreamDone = true;
-          if (ttsStreamEnded || (!playingAudio && !audioQ.length)) {
-            commitAssistantText();
-            if (!playingAudio && !audioQ.length) finishAssistantPlayback();
-          }
+          commitAssistantText();
+          if (ttsStreamEnded && !playingAudio && !audioQ.length) finishAssistantPlayback();
         }
         break;
       case 'interrupt':
@@ -1410,6 +1484,7 @@ function stopAudioPlayback() {
   activeAudioSources = [];
   audioQ = [];
   playingAudio = false;
+  playbackNextAt = audioCtx ? audioCtx.currentTime : 0;
 }
 
 function finishAssistantPlayback() {
@@ -1438,26 +1513,42 @@ function maybeAutoListen() {
   startRec();
 }
 
-async function playNext() {
-  if (!audioQ.length) {
+function completeAudioSource(src) {
+  activeAudioSources = activeAudioSources.filter(x => x !== src);
+  scheduleAudioPlayback();
+}
+
+async function scheduleAudioPlayback() {
+  if (!audioQ.length && !activeAudioSources.length) {
     playingAudio = false;
     if (ttsStreamEnded) finishAssistantPlayback();
     return;
   }
+  if (!audioQ.length) return;
+
   playingAudio = true;
   await ensureCtx();
-  const chunk = audioQ.shift();
-  try {
-    const src = audioCtx.createBufferSource();
-    src.buffer = pcm16ToAudioBuffer(chunk.buffer, chunk.sampleRate);
-    src.connect(audioCtx.destination);
-    activeAudioSources.push(src);
-    src.onended = () => {
-      activeAudioSources = activeAudioSources.filter(x => x !== src);
-      playNext();
-    };
-    src.start();
-  } catch { playNext(); }
+  playbackNextAt = Math.max(playbackNextAt || 0, audioCtx.currentTime + 0.015);
+
+  while (audioQ.length && activeAudioSources.length < 8) {
+    const chunk = audioQ.shift();
+    try {
+      const src = audioCtx.createBufferSource();
+      src.buffer = pcm16ToAudioBuffer(chunk.buffer, chunk.sampleRate);
+      src.connect(audioCtx.destination);
+      const startAt = Math.max(playbackNextAt, audioCtx.currentTime + 0.01);
+      src.onended = () => completeAudioSource(src);
+      activeAudioSources.push(src);
+      src.start(startAt);
+      playbackNextAt = startAt + src.buffer.duration;
+    } catch {
+      continue;
+    }
+  }
+}
+
+function playNext() {
+  scheduleAudioPlayback();
 }
 
 function toggleMic() {
@@ -1567,20 +1658,42 @@ function micState(s) {
   const stat = document.getElementById('mic-status');
   const hint = document.getElementById('mic-hint');
   const hero = document.getElementById('voice-hero');
+  const lang = document.getElementById('lang-sel')?.value || 'uz-UZ';
+  const labels = {
+    'uz-UZ': {
+      listening: ['Tinglayapman...', "Gap tugasa o'zi to'xtaydi"],
+      speaking: ['Robot gapirmoqda...', allowInterrupt ? "Bosib to'xtatish mumkin" : ''],
+      processing: ['Tushunyapman...', 'Javob tayyorlanmoqda'],
+      idle: ['Tayyor', 'Tugmani bosib gapiring'],
+    },
+    'en-US': {
+      listening: ['Listening...', 'It stops automatically after silence'],
+      speaking: ['Robot is speaking...', allowInterrupt ? 'Press to interrupt' : ''],
+      processing: ['Understanding...', 'Preparing the answer'],
+      idle: ['Ready', 'Press the button and speak'],
+    },
+    'ru-RU': {
+      listening: ['Слушаю...', 'Остановится автоматически после паузы'],
+      speaking: ['Робот говорит...', allowInterrupt ? 'Нажмите, чтобы прервать' : ''],
+      processing: ['Распознаю...', 'Готовлю ответ'],
+      idle: ['Готово', 'Нажмите кнопку и говорите'],
+    },
+  };
+  const copy = labels[lang] || labels['uz-UZ'];
   btn.className = '';
   if (s==='listening') {
     btn.classList.add('listening');
-    stat.textContent='Tinglayapman...'; hint.textContent="Gap tugasa o'zi to'xtaydi";
+    stat.textContent=copy.listening[0]; hint.textContent=copy.listening[1];
     hero.style.display='block';
   } else if (s==='speaking') {
     btn.classList.add('speaking');
-    stat.textContent='Robot gapirmoqda...'; hint.textContent=allowInterrupt ? "Bosib to'xtatish mumkin" : '';
+    stat.textContent=copy.speaking[0]; hint.textContent=copy.speaking[1];
     hero.style.display='block';
   } else if (s==='processing') {
-    stat.textContent='Tushunyapman...'; hint.textContent='Javob tayyorlanmoqda';
+    stat.textContent=copy.processing[0]; hint.textContent=copy.processing[1];
     hero.style.display='block';
   } else {
-    stat.textContent='Tayyor'; hint.textContent='Tugmani bosib gapiring';
+    stat.textContent=copy.idle[0]; hint.textContent=copy.idle[1];
     hero.style.display='none';
   }
 }
@@ -1830,11 +1943,150 @@ function thermalConnect() {
 //  FACE RECOGNITION
 // ═══════════════════════════════════════════════════════════════
 let faceEnabled = false, faceCamSt = null;
+let facePresent = false;
+let lastFaceSeenAt = 0;
+let lastFaceIdentifyAt = 0;
+let lastDetectedFaceCount = 0;
+let activeKnownPersonId = null;
+let pendingUnknownFace = false;
+const FACE_ABSENCE_MS = 1800;
+const FACE_IDENTIFY_COOLDOWN_MS = 2000;
+
+function setFaceUi(state, person=null, detail='') {
+  const badge = document.getElementById('face-badge');
+  const row = document.getElementById('person-row');
+  const name = document.getElementById('p-name');
+  const sub = document.getElementById('p-sub');
+  const avatar = document.getElementById('p-avatar');
+
+  if (state === 'standby') {
+    badge.textContent = 'Standby';
+    badge.className = 'badge b-muted';
+    row.style.display = 'none';
+    name.textContent = '—';
+    sub.textContent = '—';
+    avatar.textContent = '👤';
+    return;
+  }
+
+  row.style.display = 'flex';
+
+  if (state === 'scanning') {
+    badge.textContent = 'Scanning';
+    badge.className = 'badge b-blue';
+    name.textContent = 'Looking for person';
+    sub.textContent = 'Camera is checking face ID';
+    avatar.textContent = '👤';
+  } else if (state === 'known') {
+    const fullName = person?.full_name || `${person?.first_name || ''} ${person?.last_name || ''}`.trim() || 'Known patient';
+    badge.textContent = `Person: ${fullName}`;
+    badge.className = 'badge b-green';
+    name.textContent = fullName;
+    sub.textContent = detail || `Face score: ${person?.score ?? '—'}`;
+    avatar.textContent = '😊';
+  } else if (state === 'unknown') {
+    badge.textContent = 'New person';
+    badge.className = 'badge b-orange';
+    name.textContent = 'Yangi bemor';
+    sub.textContent = detail || "Ro'yxatdan o'tkazish kutilmoqda";
+    avatar.textContent = '👤';
+  } else if (state === 'empty') {
+    badge.textContent = 'No person';
+    badge.className = 'badge b-muted';
+    name.textContent = 'Odam topilmadi';
+    sub.textContent = "Kamera oldida odam ko'rinmadi";
+    avatar.textContent = '👤';
+  } else if (state === 'error') {
+    badge.textContent = 'Face ID error';
+    badge.className = 'badge b-red';
+    name.textContent = 'Face ID ishlamadi';
+    sub.textContent = detail || 'Settings yoki kamera holatini tekshiring';
+    avatar.textContent = '👤';
+  }
+}
+
+function drawFaceBoxes(boxes=[]) {
+  const canvas = document.getElementById('face-canvas');
+  const vid = document.getElementById('face-video');
+  const ctx = canvas.getContext('2d');
+  canvas.width = vid.videoWidth || 640;
+  canvas.height = vid.videoHeight || 480;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#22c55e';
+  ctx.font = '16px Inter, sans-serif';
+  ctx.fillStyle = '#22c55e';
+  boxes.forEach((box) => {
+    const x = Number(box.x || 0);
+    const y = Number(box.y || 0);
+    const w = Number(box.w || 0);
+    const h = Number(box.h || 0);
+    if (w <= 0 || h <= 0) return;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillText('Face detected', x, Math.max(18, y - 8));
+  });
+}
+
+function notifyFaceIdentity(face) {
+  if (!face) return;
+  const boxes = Array.isArray(face.faces) ? face.faces : [];
+  drawFaceBoxes(boxes);
+
+  if (face.status === 'no_face') {
+    const wasPresent = facePresent;
+    if (wasPresent && Date.now() - lastFaceSeenAt > FACE_ABSENCE_MS) {
+      facePresent = false;
+      lastDetectedFaceCount = 0;
+      activeKnownPersonId = null;
+      pendingUnknownFace = false;
+      drawFaceBoxes([]);
+      setFaceUi('empty');
+    } else if (!wasPresent) {
+      setFaceUi('empty');
+    }
+    return;
+  }
+
+  facePresent = true;
+  lastFaceSeenAt = Date.now();
+  lastDetectedFaceCount = boxes.length || 1;
+
+  if (face.status === 'known' && face.person) {
+    const p = face.person;
+    setFaceUi('known', p);
+    if (activeKnownPersonId === p.person_id && !pendingUnknownFace) return;
+    activeKnownPersonId = p.person_id;
+    pendingUnknownFace = false;
+    ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({
+      type:'face_identity',
+      person:p,
+      thermal:patientThermalPayload()
+    }));
+    return;
+  }
+
+  if (face.status === 'unknown') {
+    setFaceUi('unknown');
+    if (pendingUnknownFace) return;
+    activeKnownPersonId = null;
+    pendingUnknownFace = true;
+    ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({
+      type:'face_identity',
+      person:null,
+      thermal:patientThermalPayload(),
+      pending_registration:{embedding:face.embedding,snapshot_path:face.snapshot_path}
+    }));
+    return;
+  }
+
+  setFaceUi('empty');
+}
 
 document.getElementById('tgl-face').addEventListener('change', async function() {
   faceEnabled = this.checked;
   if (faceEnabled) {
     try {
+      setFaceUi('scanning');
       faceCamSt = await navigator.mediaDevices.getUserMedia({ video:{width:640,height:480} });
       const vid = document.getElementById('face-video');
       vid.srcObject = faceCamSt; vid.play();
@@ -1842,18 +2094,32 @@ document.getElementById('tgl-face').addEventListener('change', async function() 
       vid.addEventListener('loadedmetadata',()=>{ cvs.width=vid.videoWidth; cvs.height=vid.videoHeight; });
       document.getElementById('cam-live').style.display='block';
       detectFace();
-    } catch(e) { alert('Camera: '+e.message); this.checked=false; faceEnabled=false; }
+    } catch(e) {
+      setFaceUi('error', null, 'Camera: ' + e.message);
+      alert('Camera: '+e.message);
+      this.checked=false;
+      faceEnabled=false;
+    }
   } else {
     if (faceCamSt) { faceCamSt.getTracks().forEach(t=>t.stop()); faceCamSt=null; }
     document.getElementById('cam-live').style.display='none';
-    document.getElementById('person-row').style.display='none';
-    document.getElementById('face-badge').textContent='Standby';
-    document.getElementById('face-badge').className='badge b-muted';
+    facePresent = false;
+    lastDetectedFaceCount = 0;
+    activeKnownPersonId = null;
+    pendingUnknownFace = false;
+    drawFaceBoxes([]);
+    setFaceUi('standby');
   }
 });
 
 async function detectFace() {
   if (!faceEnabled) return;
+  const now = Date.now();
+  if (now - lastFaceIdentifyAt < FACE_IDENTIFY_COOLDOWN_MS) {
+    setTimeout(detectFace, 500);
+    return;
+  }
+  lastFaceIdentifyAt = now;
   const vid = document.getElementById('face-video');
   const cvs = document.createElement('canvas');
   cvs.width=vid.videoWidth||640; cvs.height=vid.videoHeight||480;
@@ -1863,33 +2129,12 @@ async function detectFace() {
     const res  = await fetch('/api/faces/identify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({faces:[{image:b64}]})});
     const data = await res.json();
     const face = (data.faces||[])[0];
-    if (face) {
-      const badge = document.getElementById('face-badge');
-      const row   = document.getElementById('person-row');
-      if (face.status==='known' && face.person) {
-        const p = face.person;
-        badge.textContent=`✅ ${p.full_name}`; badge.className='badge b-green';
-        row.style.display='flex';
-        document.getElementById('p-name').textContent=p.full_name;
-        document.getElementById('p-sub').textContent='Score: '+p.score;
-        document.getElementById('p-avatar').textContent='😊';
-        ws && ws.send(JSON.stringify({type:'face_identity',person:p,thermal:patientThermalPayload()}));
-      } else {
-        badge.textContent='🔍 Noma\'lum'; badge.className='badge b-muted';
-        row.style.display='flex';
-        document.getElementById('p-name').textContent='Noma\'lum';
-        document.getElementById('p-sub').textContent='Ro\'yxatdan o\'tkazilmagan';
-        document.getElementById('p-avatar').textContent='👤';
-        ws && ws.send(JSON.stringify({
-          type:'face_identity',
-          person:null,
-          thermal:patientThermalPayload(),
-          pending_registration:{embedding:face.embedding,snapshot_path:face.snapshot_path}
-        }));
-      }
-    }
-  } catch(e) { console.warn('Face error:',e); }
-  if (faceEnabled) setTimeout(detectFace, 2200);
+    notifyFaceIdentity(face || {status:'no_face', faces:[]});
+  } catch(e) {
+    console.warn('Face error:',e);
+    setFaceUi('error', null, e.message || 'Face identify request failed');
+  }
+  if (faceEnabled) setTimeout(detectFace, 500);
 }
 
 
@@ -1897,7 +2142,7 @@ async function detectFace() {
 //  ROBOT — Serial ports
 // ═══════════════════════════════════════════════════════════════
 const DEVS = ['hand','head','move'];
-let curSpeed = 60, headSpeed = 40, srvTimers = {};
+let curSpeed = 60, headStepSize = 15, headAngle = 90, srvTimers = {};
 const robotConnected = { hand:false, head:false, move:false };
 
 async function scanPorts() {
@@ -2127,21 +2372,112 @@ function hs(num,angle) {
   headSend(`HEAD SERVO ${angle}`, `HEAD SERVO ${angle}`);
 }
 
-function headSetSpeed(value) {
-  headSpeed = parseInt(value || 40);
-  document.getElementById('head-speed-val').textContent = headSpeed;
+function headGaugePoint(angle, radius=84) {
+  const clamped = Math.max(0, Math.min(180, parseInt(angle || 0)));
+  const theta = (180 - clamped) * Math.PI / 180;
+  return {
+    x: 130 + Math.cos(theta) * radius,
+    y: 112 - Math.sin(theta) * radius
+  };
+}
+
+function initHeadGauge() {
+  const ticks = document.getElementById('head-gauge-ticks');
+  if (!ticks || ticks.dataset.ready) return;
+  ticks.dataset.ready = '1';
+
+  for (let angle = 0; angle <= 180; angle += 10) {
+    const major = angle % 30 === 0;
+    const outer = headGaugePoint(angle, 104);
+    const inner = headGaugePoint(angle, major ? 88 : 94);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', outer.x.toFixed(1));
+    line.setAttribute('y1', outer.y.toFixed(1));
+    line.setAttribute('x2', inner.x.toFixed(1));
+    line.setAttribute('y2', inner.y.toFixed(1));
+    line.setAttribute('class', major ? 'tick tick-major' : 'tick');
+    ticks.appendChild(line);
+
+    if (angle % 10 === 0) {
+      const labelPoint = headGaugePoint(angle, major ? 73 : 77);
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', labelPoint.x.toFixed(1));
+      text.setAttribute('y', labelPoint.y.toFixed(1));
+      text.setAttribute('class', 'tick-label');
+      text.textContent = angle;
+      ticks.appendChild(text);
+    }
+  }
+
+  const gauge = document.getElementById('head-gauge');
+  let dragging = false;
+  const updateFromPointer = async (event, send=false) => {
+    const svg = document.getElementById('head-gauge-svg');
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 260;
+    const y = ((event.clientY - rect.top) / rect.height) * 128;
+    const dx = x - 130;
+    const dy = 112 - y;
+    if (dy < -8) return;
+    const angle = Math.round(180 - (Math.atan2(dy, dx) * 180 / Math.PI));
+    setHeadAngleUi(angle, 'Angle');
+    if (send) await headSend(`HEAD SERVO ${headAngle}`);
+  };
+
+  gauge?.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    gauge.setPointerCapture?.(event.pointerId);
+    updateFromPointer(event, true);
+  });
+  gauge?.addEventListener('pointermove', (event) => {
+    if (dragging) updateFromPointer(event, false);
+  });
+  gauge?.addEventListener('pointerup', async (event) => {
+    if (!dragging) return;
+    dragging = false;
+    gauge.releasePointerCapture?.(event.pointerId);
+    await updateFromPointer(event, true);
+  });
+  gauge?.addEventListener('pointercancel', () => { dragging = false; });
+}
+
+function setHeadAngleUi(value, label='Angle') {
+  headAngle = Math.max(0, Math.min(180, parseInt(value || 90)));
+  document.getElementById('head-raw-val').textContent = headAngle;
+  const raw = document.getElementById('head-angle-slider') || document.querySelector('input[oninput="headRaw(this.value)"]');
+  if (raw) raw.value = headAngle;
+  const st = document.getElementById('head-st');
+  if (st) st.textContent = `${label} ${headAngle}\u00B0`;
+  const gaugeValue = document.getElementById('head-gauge-value');
+  if (gaugeValue) gaugeValue.textContent = `${headAngle}\u00B0`;
+  const tip = headGaugePoint(headAngle, 84);
+  const needle = document.getElementById('head-gauge-needle');
+  const dot = document.getElementById('head-gauge-tip');
+  if (needle) {
+    needle.setAttribute('x2', tip.x.toFixed(1));
+    needle.setAttribute('y2', tip.y.toFixed(1));
+  }
+  if (dot) {
+    dot.setAttribute('cx', tip.x.toFixed(1));
+    dot.setAttribute('cy', tip.y.toFixed(1));
+  }
+}
+
+function headSetStep(value) {
+  headStepSize = Math.max(1, Math.min(45, parseInt(value || 15)));
+  document.getElementById('head-speed-val').textContent = headStepSize;
 }
 
 async function headNeutral(value) {
   document.getElementById('head-neutral-val').textContent = value;
-  await headSend(`HEAD NEUTRAL ${value}`);
+  setHeadAngleUi(value, 'Center');
+  await headSend(`HEAD SERVO ${headAngle}`);
 }
 
 async function headRaw(value) {
-  document.getElementById('head-raw-val').textContent = value;
-  const st = document.getElementById('head-st');
-  if (st) st.textContent = `Raw ${value}`;
-  await headSend(`HEAD SERVO ${value}`);
+  setHeadAngleUi(value);
+  await headSend(`HEAD SERVO ${headAngle}`);
 }
 
 async function headSend(cmd, label=cmd) {
@@ -2151,40 +2487,16 @@ async function headSend(cmd, label=cmd) {
   return data;
 }
 
-async function headMove(dir) {
-  const cmd = `HEAD ${dir} ${headSpeed}`;
-  const st = document.getElementById('head-st');
-  if (st) st.textContent = dir === 'LEFT' ? 'Left' : 'Right';
-  await headSend(cmd);
+async function headStep(dir) {
+  const next = dir === 'LEFT' ? headAngle - headStepSize : headAngle + headStepSize;
+  setHeadAngleUi(next, dir === 'LEFT' ? 'Left' : 'Right');
+  await headSend(`HEAD SERVO ${headAngle}`);
 }
 
-let headHeld = false;
-
-async function headHold(event, dir) {
-  if (event) {
-    event.preventDefault();
-    try { event.currentTarget?.setPointerCapture?.(event.pointerId); } catch {}
-  }
-  if (headHeld === dir) return;
-  headHeld = dir;
-  await headMove(dir);
-}
-
-async function headRelease(event) {
-  if (event) {
-    event.preventDefault();
-    try { event.currentTarget?.releasePointerCapture?.(event.pointerId); } catch {}
-  }
-  if (!headHeld) return;
-  headHeld = false;
-  await headStop();
-}
-
-async function headStop() {
-  headHeld = false;
-  const st = document.getElementById('head-st');
-  if (st) st.textContent = 'Stopped';
-  await headSend('HEAD STOP');
+async function headCenter() {
+  const center = parseInt(document.getElementById('head-neutral-val')?.textContent || 90);
+  setHeadAngleUi(center, 'Center');
+  await headSend(`HEAD SERVO ${headAngle}`);
 }
 
 
@@ -2399,11 +2711,11 @@ async function runGestureSteps(steps, label){
 
 async function gesture(name){
   const acts={
-    hello:[ {e:'/api/head/command',b:{command:'HEAD LEFT 40'}}, {wait:250}, {e:'/api/head/command',b:{command:'HEAD STOP'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
+    hello:[ {e:'/api/head/command',b:{command:'HEAD SERVO 60'}}, {wait:250}, {e:'/api/head/command',b:{command:'HEAD SERVO 90'}}, {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:120}} ],
     open: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:90}}, {e:'/api/hand/move',b:{hand:'R',servo:2,angle:180}}, {e:'/api/hand/move',b:{hand:'L',servo:1,angle:100}}, {e:'/api/hand/move',b:{hand:'L',servo:2,angle:0}} ],
     fist: [ ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'R',servo:s,angle:0}})), ...[1,2,3,4,5,6].map(s=>({e:'/api/hand/move',b:{hand:'L',servo:s,angle:0}})) ],
     wave: [ {e:'/api/hand/move',b:{hand:'R',servo:1,angle:30}} ],
-    nod:  [ {e:'/api/head/command',b:{command:'HEAD RIGHT 35'}}, {wait:220}, {e:'/api/head/command',b:{command:'HEAD STOP'}} ],
+    nod:  [ {e:'/api/head/command',b:{command:'HEAD SERVO 75'}}, {wait:180}, {e:'/api/head/command',b:{command:'HEAD SERVO 105'}}, {wait:180}, {e:'/api/head/command',b:{command:'HEAD SERVO 90'}} ],
   };
   await runGestureSteps((acts[name]||[]).map(s=>({...s,label:name})), name);
   addLog('gesture: '+name,'ok');
@@ -2514,6 +2826,8 @@ function clrLog(){ document.getElementById('log-box').innerHTML=''; }
 
 // ── BOOT ─────────────────────────────────────────────────────
 wsInit();
+initHeadGauge();
+setHeadAngleUi(90, 'Angle');
 initThermalState();
 buildSettingsUI();
 loadSettings();

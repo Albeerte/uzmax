@@ -15,10 +15,10 @@ Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
 
-// Continuous servo values
-int SERVO_STOP = 1500;
-int SERVO_LEFT = 1300;
-int SERVO_RIGHT = 1700;
+int currentHeadAngle = 90;
+const int HEAD_MIN_ANGLE = 0;
+const int HEAD_MAX_ANGLE = 180;
+const int HEAD_CENTER_ANGLE = 90;
 
 void setAll(uint8_t r, uint8_t g, uint8_t b) {
   for (int i = 0; i < LED_COUNT; i++) {
@@ -48,21 +48,21 @@ bool parseThreeInts(String text, int startIndex, int &a, int &b, int &c) {
   return true;
 }
 
+void servoWriteAngle(int angle) {
+  currentHeadAngle = constrain(angle, HEAD_MIN_ANGLE, HEAD_MAX_ANGLE);
+  headServo.write(currentHeadAngle);
+}
+
 void servoStop() {
-  headServo.writeMicroseconds(SERVO_STOP);
+  servoWriteAngle(currentHeadAngle);
 }
 
-void servoLeft() {
-  headServo.writeMicroseconds(SERVO_LEFT);
+void servoLeft(int step = 15) {
+  servoWriteAngle(currentHeadAngle - constrain(step, 1, 90));
 }
 
-void servoRight() {
-  headServo.writeMicroseconds(SERVO_RIGHT);
-}
-
-void servoRaw(int us) {
-  us = constrain(us, 1000, 2000);
-  headServo.writeMicroseconds(us);
+void servoRight(int step = 15) {
+  servoWriteAngle(currentHeadAngle + constrain(step, 1, 90));
 }
 
 void rainbow(int waitMs) {
@@ -84,10 +84,11 @@ void printReady() {
   Serial.println("HEAD READY");
   Serial.println("Commands:");
   Serial.println("PING");
-  Serial.println("HEAD LEFT");
-  Serial.println("HEAD RIGHT");
+  Serial.println("HEAD LEFT [step]");
+  Serial.println("HEAD RIGHT [step]");
   Serial.println("HEAD STOP");
-  Serial.println("HEAD SERVO 1500");
+  Serial.println("HEAD CENTER");
+  Serial.println("HEAD SERVO 90");
   Serial.println("HEAD LED 255 0 0");
   Serial.println("HEAD LED_OFF");
   Serial.println("HEAD RAINBOW");
@@ -108,29 +109,50 @@ void handleCommand(String command) {
     return;
   }
 
-  if (upper == "HEAD LEFT") {
-    servoLeft();
-    Serial.println("OK:HEAD_LEFT");
+  if (upper.startsWith("HEAD LEFT")) {
+    int step = command.substring(9).toInt();
+    if (step <= 0) step = 15;
+    servoLeft(step);
+    Serial.print("OK:HEAD_LEFT ");
+    Serial.println(currentHeadAngle);
     return;
   }
 
-  if (upper == "HEAD RIGHT") {
-    servoRight();
-    Serial.println("OK:HEAD_RIGHT");
+  if (upper.startsWith("HEAD RIGHT")) {
+    int step = command.substring(10).toInt();
+    if (step <= 0) step = 15;
+    servoRight(step);
+    Serial.print("OK:HEAD_RIGHT ");
+    Serial.println(currentHeadAngle);
     return;
   }
 
   if (upper == "HEAD STOP") {
     servoStop();
-    Serial.println("OK:HEAD_STOP");
+    Serial.print("OK:HEAD_HOLD ");
+    Serial.println(currentHeadAngle);
+    return;
+  }
+
+  if (upper == "HEAD CENTER" || upper == "HEAD NEUTRAL") {
+    servoWriteAngle(HEAD_CENTER_ANGLE);
+    Serial.println("OK:HEAD_CENTER 90");
+    return;
+  }
+
+  if (upper.startsWith("HEAD NEUTRAL ")) {
+    int angle = command.substring(13).toInt();
+    servoWriteAngle(angle);
+    Serial.print("OK:HEAD_NEUTRAL ");
+    Serial.println(currentHeadAngle);
     return;
   }
 
   if (upper.startsWith("HEAD SERVO ")) {
-    int us = command.substring(11).toInt();
-    servoRaw(us);
+    int angle = command.substring(11).toInt();
+    servoWriteAngle(angle);
     Serial.print("OK:HEAD_SERVO ");
-    Serial.println(us);
+    Serial.println(currentHeadAngle);
     return;
   }
 
@@ -199,7 +221,7 @@ void setup() {
   headServo.setPeriodHertz(50);
   headServo.attach(HEAD_SERVO_PIN, 1000, 2000);
 
-  servoStop();
+  servoWriteAngle(HEAD_CENTER_ANGLE);
 
   strip.begin();
   strip.setBrightness(brightnessValue);

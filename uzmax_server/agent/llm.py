@@ -50,10 +50,10 @@ class OpenAIClient:
                 {
                     "role": "system",
                     "content": (
-                        "Extract the person's first and last name from the phrase. "
+                        "Extract the person's name from the phrase. A single first name is enough. "
                         "Return only JSON in this exact shape: "
                         '{"first_name":"...","last_name":"...","is_confident":true}. '
-                        "If there is no last name, return an empty string for last_name. "
+                        "If there is no surname or last name, return an empty string for last_name. "
                         "If you are not confident, return is_confident=false. "
                         "Do not add markdown."
                     ),
