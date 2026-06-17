@@ -371,7 +371,7 @@ DOCTOR_DIRECTORY = [
         "room": "101-xona",
         "work_time": "09:00 - 17:00",
         "use_for": "isitma, yo'tal, holsizlik, shamollash, bosh og'rig'i va umumiy og'riqlar",
-        "keywords": ["terapevt", "isitma", "yo'tal", "yotal", "holsizlik", "gripp", "shamollash", "tomoq og'rig'i", "tomoq ogrigi", "bosh og'rig'i", "bosh ogrigi", "umumiy og'riq"],
+        "keywords": ["terapevt", "isitma", "yo'tal", "yotal", "holsizlik", "gripp", "shamollash", "tomoq og'rig'i", "tomoq ogrigi", "bosh og'rig'i", "bosh ogrigi", "boshim og'riyapti", "boshim ogriyapti", "umumiy og'riq"],
     },
     {
         "id": 6,
@@ -1609,6 +1609,7 @@ def build_doctor_routing_result(text: str, current_person: dict | None, lang: st
     queue_item = add_patient_to_doctor_queue(current_person, doctor)
     original_specialty = doctor.get("specialty") or doctor.get("speciality")
     specialty = doctor_specialty_label(doctor, lang)
+    advice = basic_patient_advice(text, lang)
     success_messages = {
         "uz-UZ": f"Assalomu alaykum. Sizning shikoyatingiz bo'yicha {specialty} shifokoriga uchrashish tavsiya qilinadi.",
         "en-US": f"Hello. Based on your complaint, a visit to a {specialty} specialist is recommended.",
@@ -1632,6 +1633,7 @@ def build_doctor_routing_result(text: str, current_person: dict | None, lang: st
             "date": queue_item.get("date"),
             "status": queue_item.get("status"),
         },
+        "basic_advice": advice,
         "retrieval": {
             "score": score,
             "matches": matches[:6],
@@ -1646,10 +1648,12 @@ def format_doctor_routing_reply(result: dict, current_person: dict | None = None
 
     doctor = result["doctor"]
     queue = result["queue"]
+    advice = result.get("basic_advice")
     name = patient_display_name(current_person)
     has_name = name and name != "Bemor"
     if lang == "en-US":
         patient_prefix = f"{name}, " if has_name else ""
+        advice_text = f"\nBasic advice: {advice}\n" if advice else ""
         return (
             f"Hello. {patient_prefix}this is not a diagnosis, only guidance to the right doctor.\n\n"
             f"Recommended specialist: {doctor['specialty']}.\n"
@@ -1658,10 +1662,12 @@ def format_doctor_routing_reply(result: dict, current_person: dict | None = None
             f"Working hours: {doctor['work_time']}\n"
             f"Your queue number: {queue['number']}\n"
             f"Date: {queue['date']}\n\n"
+            f"{advice_text}"
             "Please go to the indicated room and wait for your turn."
         )
     if lang == "ru-RU":
         patient_prefix = f"{name}, " if has_name else ""
+        advice_text = f"\nБазовая рекомендация: {advice}\n" if advice else ""
         return (
             f"Здравствуйте. {patient_prefix}это не диагноз, а только направление к подходящему врачу.\n\n"
             f"Рекомендуемый специалист: {doctor['specialty']}.\n"
@@ -1670,9 +1676,11 @@ def format_doctor_routing_reply(result: dict, current_person: dict | None = None
             f"Время работы: {doctor['work_time']}\n"
             f"Ваш номер очереди: {queue['number']}\n"
             f"Дата: {queue['date']}\n\n"
+            f"{advice_text}"
             "Пожалуйста, пройдите в указанный кабинет и ожидайте своей очереди."
         )
     patient_prefix = "" if not has_name else f"{name}, "
+    advice_text = f"\nAsosiy tavsiya: {advice}\n" if advice else ""
     return (
         f"Assalomu alaykum. {patient_prefix}bu diagnostika emas, sizni to'g'ri shifokorga yo'naltirish uchun tavsiya.\n\n"
         f"Sizga {doctor['specialty']} shifokori tavsiya qilinadi.\n"
@@ -1681,6 +1689,7 @@ def format_doctor_routing_reply(result: dict, current_person: dict | None = None
         f"Ish vaqti: {doctor['work_time']}\n"
         f"Navbat raqamingiz: {queue['number']}\n"
         f"Sana: {queue['date']}\n\n"
+        f"{advice_text}"
         "Iltimos, belgilangan xonaga boring va navbatingizni kuting."
     )
 
@@ -1692,8 +1701,49 @@ def route_patient_request(text: str, current_person: dict | None, lang: str | No
     return format_doctor_routing_reply(result, current_person, lang)
 
 
+def basic_patient_advice(text: str, lang: str | None = None) -> str | None:
+    q = clean_patient_text(text)
+    lang = normalize_chat_lang(lang, text)
+    advice = None
+    if any(word in q for word in ("bosh og'riq", "bosh og'rig'i", "boshim ogriyapti", "boshim og'riyapti", "headache", "head pain", "головная боль", "болит голова")):
+        advice = {
+            "uz-UZ": "Hozircha suv iching, tinch joyda dam oling, harorat va qon bosimini tekshirtiring. Og'riq kuchli bo'lsa yoki qayt qilishi, hushdan ketish, ko'rish buzilishi bo'lsa, zudlik bilan shifokorga murojaat qiling.",
+            "en-US": "For now, drink water, rest in a quiet place, and check temperature and blood pressure. If the pain is severe or comes with vomiting, fainting, or vision changes, seek urgent medical help.",
+            "ru-RU": "Пока выпейте воды, отдохните в тихом месте, проверьте температуру и давление. Если боль сильная или есть рвота, обморок, нарушение зрения, срочно обратитесь к врачу.",
+        }
+    elif any(word in q for word in ("isitma", "fever", "температура", "жар")):
+        advice = {
+            "uz-UZ": "Ko'p suyuqlik iching, niqob taqing va haroratni kuzating. Harorat 38°C dan oshsa yoki holsizlik kuchaysa, shifokor ko'rigidan o'ting.",
+            "en-US": "Drink plenty of fluids, wear a mask, and monitor temperature. If it rises above 38°C or weakness increases, see a doctor.",
+            "ru-RU": "Пейте больше жидкости, наденьте маску и следите за температурой. Если она выше 38°C или слабость усиливается, обратитесь к врачу.",
+        }
+    elif any(word in q for word in ("yo'tal", "yotal", "cough", "кашель")):
+        advice = {
+            "uz-UZ": "Niqob taqing, iliq suyuqlik iching va boshqa odamlardan masofa saqlang. Nafas qisishi yoki yuqori isitma bo'lsa, shifokorga boring.",
+            "en-US": "Wear a mask, drink warm fluids, and keep distance from others. If you have shortness of breath or high fever, see a doctor.",
+            "ru-RU": "Наденьте маску, пейте теплую жидкость и держите дистанцию. При одышке или высокой температуре обратитесь к врачу.",
+        }
+    elif any(word in q for word in ("qorin", "oshqozon", "stomach", "abdominal", "живот", "желудок")):
+        advice = {
+            "uz-UZ": "Yengil ovqatlaning, suyuqlik iching va og'riq kuchaysa yoki ich ketishi/qon/qusish bo'lsa, shifokorga murojaat qiling.",
+            "en-US": "Eat lightly, drink fluids, and see a doctor if pain worsens or diarrhea, blood, or vomiting appears.",
+            "ru-RU": "Ешьте легкую пищу, пейте жидкость и обратитесь к врачу, если боль усиливается, есть понос, кровь или рвота.",
+        }
+    if not advice:
+        return None
+    return advice.get(lang, advice["uz-UZ"])
+
+
 def local_direct_response(user_text: str, current_person=None, lang: str | None = None) -> str | None:
     q = clean_patient_text(user_text)
+    internal_markers = (
+        "oldingizda",
+        "endi siz bu odamni taniysiz",
+        "uzmax routing natijasi",
+        "bemorga shu yo'nalishni",
+    )
+    if any(marker in q for marker in internal_markers):
+        return None
     lang = normalize_chat_lang(lang, user_text)
     routed = route_patient_request(user_text, current_person, lang)
     if routed:
@@ -2532,6 +2582,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     if is_responding:
                         force_cancel_response()
                         await websocket.send_json({"type": "interrupt"})
+
+                elif msg_type == "person_left":
+                    current_person = None
+                    pending_registration = None
+                    last_auto_greet_key = None
+                    last_auto_greet_at = 0.0
 
                 elif msg_type == "face_identity":
                     incoming_person = msg.get("person")

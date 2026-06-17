@@ -95,6 +95,36 @@
     }
     .ws-dot{width:7px;height:7px;border-radius:50%;background:var(--border2);}
     .ws-dot.online{background:var(--green);}
+    .full-btn{
+      width:34px;height:34px;border-radius:9px;
+      border:1px solid var(--border);
+      background:var(--surface);
+      color:var(--muted);
+      display:flex;align-items:center;justify-content:center;
+      cursor:pointer;transition:all .13s ease;
+    }
+    .full-btn:hover{background:var(--brand-lt);border-color:var(--brand);color:var(--brand);}
+    .full-btn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+    body.full-view{
+      overflow:hidden;
+      background:var(--surface);
+    }
+    body.full-view nav{
+      position:fixed;left:0;right:0;top:0;
+    }
+    body.full-view .page.active{
+      height:calc(100vh - 56px);
+      overflow:auto;
+      padding:14px;
+      margin-top:56px;
+    }
+    body.full-view .g3{
+      grid-template-columns:minmax(320px, .9fr) minmax(420px, 1.35fr) minmax(280px, .8fr);
+      height:100%;
+    }
+    body.full-view #chat-box{height:calc(100vh - 316px);min-height:260px;}
+    body.full-view .cam-stage{min-height:360px;}
+    body.full-view .cam-stage video{height:100%;object-fit:cover;}
 
     /* ── PAGES ─────────────────────────────────────────────── */
     .page{display:none;padding:20px;animation:fadeUp .18s ease;}
@@ -540,6 +570,27 @@
     .guide-card code{background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:1px 5px;}
     .guide-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:auto;}
     .guide-actions a{text-decoration:none;}
+    .vitals-card{padding:14px;display:flex;flex-direction:column;gap:12px;}
+    .vital-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    .vital-tile{
+      min-height:78px;border:1px solid var(--border);background:var(--card2);
+      border-radius:10px;padding:10px;display:flex;flex-direction:column;justify-content:space-between;
+    }
+    .vital-label{font-size:.67rem;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+    .vital-value{font-size:1.25rem;line-height:1.05;font-weight:900;color:var(--text);}
+    .vital-sub{font-size:.72rem;color:var(--muted);font-weight:600;}
+    .vital-temp .vital-value{font-size:1.55rem;color:var(--brand);}
+    .vital-temp.fever .vital-value{color:var(--red);}
+    .vital-temp.warn .vital-value{color:var(--orange);}
+    .vital-wide{grid-column:1 / -1;min-height:74px;}
+    .vital-status-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    .vital-status-pill{
+      padding:3px 8px;border-radius:999px;background:var(--muted-lt);color:var(--muted);
+      font-size:.68rem;font-weight:800;
+    }
+    .vital-status-pill.ok{background:var(--green-lt);color:var(--green);}
+    .vital-status-pill.warn{background:var(--orange-lt);color:var(--orange);}
+    .vital-status-pill.danger{background:var(--red-lt);color:var(--red);}
     /* ── RESPONSIVE ────────────────────────────────────────── */
     @media(max-width:1100px){
       .g3{grid-template-columns:300px 1fr;}
@@ -547,6 +598,11 @@
     }
     @media(max-width:740px){
       .g3,.g2{grid-template-columns:1fr;}
+      nav{padding:0 12px;}
+      .nav-logo{margin-right:10px;}
+      .page-tabs{overflow-x:auto;}
+      .page-tab{padding:6px 10px;white-space:nowrap;}
+      .ws-pill span{display:none;}
       .page{padding:12px;}
       .env-grid,.gesture-builder{grid-template-columns:1fr;}
       .settings-actions{align-items:stretch;flex-direction:column;}
@@ -576,6 +632,14 @@
   </div>
 
   <div class="nav-right">
+    <button class="full-btn" id="full-btn" onclick="toggleFullView()" title="Full view" aria-label="Full view">
+      <svg id="full-icon-open" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 3H3v5"/><path d="M16 3h5v5"/><path d="M21 16v5h-5"/><path d="M8 21H3v-5"/>
+      </svg>
+      <svg id="full-icon-close" viewBox="0 0 24 24" aria-hidden="true" style="display:none;">
+        <path d="M9 3v6H3"/><path d="M15 3v6h6"/><path d="M21 15h-6v6"/><path d="M3 15h6v6"/>
+      </svg>
+    </button>
     <div class="ws-pill" id="ws-pill">
       <div class="ws-dot" id="ws-dot"></div>
       <span id="ws-lbl">Ulanmoqda…</span>
@@ -741,8 +805,41 @@
         <div id="stt-partial" style="padding:12px 14px;min-height:56px;font-size:.86rem;color:var(--muted);font-style:italic;">—</div>
       </div>
       <div class="card">
-        <div class="card-head"><span class="card-title">🤖 LLM Stream</span></div>
-        <div id="llm-stream" style="padding:12px 14px;min-height:80px;font-size:.87rem;line-height:1.55;color:var(--text);">—</div>
+        <div class="card-head"><span class="card-title">📋 Patient Vitals</span></div>
+        <div class="vitals-card">
+          <div class="vital-grid">
+            <div class="vital-tile">
+              <div class="vital-label">Sana</div>
+              <div class="vital-value" id="vital-date">—</div>
+              <div class="vital-sub" id="vital-weekday">—</div>
+            </div>
+            <div class="vital-tile">
+              <div class="vital-label">Vaqt</div>
+              <div class="vital-value" id="vital-time">—</div>
+              <div class="vital-sub">Asia/Tashkent</div>
+            </div>
+            <div class="vital-tile vital-temp" id="vital-temp-tile">
+              <div class="vital-label">Human temp</div>
+              <div class="vital-value" id="vital-temp">—</div>
+              <div class="vital-sub" id="vital-temp-sub">Thermal kutilyapti</div>
+            </div>
+            <div class="vital-tile">
+              <div class="vital-label">Patient</div>
+              <div class="vital-value" id="vital-person">No person</div>
+              <div class="vital-sub" id="vital-person-sub">Camera standby</div>
+            </div>
+            <div class="vital-tile vital-wide">
+              <div class="vital-status-row">
+                <div>
+                  <div class="vital-label">Direction</div>
+                  <div class="vital-value" id="vital-direction">—</div>
+                </div>
+                <span class="vital-status-pill" id="vital-status">Waiting</span>
+              </div>
+              <div class="vital-sub" id="vital-queue">Doctor route and queue will appear here</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1112,6 +1209,39 @@ function showPage(name) {
   document.getElementById('tab-' + name).classList.add('active');
 }
 
+function setFullViewState(on) {
+  document.body.classList.toggle('full-view', on);
+  const openIcon = document.getElementById('full-icon-open');
+  const closeIcon = document.getElementById('full-icon-close');
+  const btn = document.getElementById('full-btn');
+  if (openIcon) openIcon.style.display = on ? 'none' : 'block';
+  if (closeIcon) closeIcon.style.display = on ? 'block' : 'none';
+  if (btn) {
+    btn.title = on ? 'Exit full view' : 'Full view';
+    btn.setAttribute('aria-label', btn.title);
+  }
+}
+
+async function toggleFullView() {
+  const isNativeFull = !!document.fullscreenElement;
+  const isFull = isNativeFull || document.body.classList.contains('full-view');
+  try {
+    if (!isFull) {
+      await document.documentElement.requestFullscreen?.();
+      setFullViewState(true);
+    } else {
+      if (document.fullscreenElement) await document.exitFullscreen?.();
+      setFullViewState(false);
+    }
+  } catch {
+    setFullViewState(!isFull);
+  }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  setFullViewState(!!document.fullscreenElement);
+});
+
 // Settings tab is generated here so the form stays clean even when older
 // placeholder markup is still present in the HTML.
 const SETTINGS_KEYS = [
@@ -1339,6 +1469,7 @@ let sttReady = false, sttReadyTimer = null, pendingAutoListen = false, ttsStream
 let llmStreamDone = false, responseTextCommitted = false;
 let activeAudioSources = [];
 let playbackNextAt = 0;
+let lastAssistantText = '';
 let heardSpeech = false, speechMs = 0, silenceMs = 0, recStartedAt = 0;
 
 const VAD_START = 0.012;
@@ -1346,6 +1477,20 @@ const VAD_STOP = 0.007;
 const VAD_MIN_SPEECH_MS = 220;
 const VAD_SILENCE_MS = 1150;
 const VAD_MAX_MS = 18000;
+
+function enableLiveConversation() {
+  liveMode = true;
+  allowInterrupt = true;
+  const liveToggle = document.getElementById('tgl-live');
+  const interruptToggle = document.getElementById('tgl-interrupt');
+  if (liveToggle) liveToggle.checked = true;
+  if (interruptToggle) interruptToggle.checked = true;
+  ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({
+    type:'set_settings',
+    live_mode:liveMode,
+    allow_interrupt:allowInterrupt
+  }));
+}
 
 function wsInit() {
   const p = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1389,11 +1534,11 @@ function wsInit() {
         pendingAutoListen = false;
         stopAudioPlayback();
         micState('speaking');
-        document.getElementById('llm-stream').textContent = '';
+        setStreamText('');
         break;
       case 'llm_partial':
         if (m.response_id === currentRespId)
-          document.getElementById('llm-stream').textContent += m.text;
+          appendStreamText(m.text);
         break;
       case 'tts_chunk':
         if (m.response_id === currentRespId) {
@@ -1415,10 +1560,7 @@ function wsInit() {
         break;
       case 'llm_done':
         if (m.response_id === currentRespId) {
-          const stream = document.getElementById('llm-stream');
-          if ((!stream.textContent || stream.textContent === '—') && m.text) {
-            stream.textContent = m.text;
-          }
+          if (!getStreamText() && m.text) setStreamText(m.text);
           llmStreamDone = true;
           commitAssistantText();
           if (ttsStreamEnded && !playingAudio && !audioQ.length) finishAssistantPlayback();
@@ -1461,8 +1603,24 @@ function sendTextChat() {
   }
   chatMsg('user', text);
   input.value = '';
-  document.getElementById('llm-stream').textContent = '';
+  setStreamText('');
   ws.send(JSON.stringify({ type:'text_message', text }));
+}
+
+function setStreamText(text='') {
+  lastAssistantText = text || '';
+  const stream = document.getElementById('llm-stream');
+  if (stream) stream.textContent = text;
+}
+
+function appendStreamText(text='') {
+  lastAssistantText += text || '';
+  const stream = document.getElementById('llm-stream');
+  if (stream) stream.textContent += text;
+}
+
+function getStreamText() {
+  return (document.getElementById('llm-stream')?.textContent || lastAssistantText || '').trim();
 }
 
 async function ensureCtx() {
@@ -1501,9 +1659,10 @@ function finishAssistantPlayback() {
 function commitAssistantText() {
   if (responseTextCommitted) return;
   const stream = document.getElementById('llm-stream');
-  const text = (stream.textContent || '').trim();
+  const text = getStreamText();
   if (text && text !== '—') chatMsg('ai', text);
-  stream.textContent = '—';
+  if (stream) stream.textContent = '—';
+  lastAssistantText = '';
   responseTextCommitted = true;
 }
 
@@ -1706,6 +1865,85 @@ function chatMsg(role, text) {
   d.textContent = text;
   box.appendChild(d);
   box.scrollTop = box.scrollHeight;
+  if (role === 'ai') updateDirectionFromText(text);
+}
+
+function updateDateVitals() {
+  const now = new Date();
+  const dateEl = document.getElementById('vital-date');
+  const weekdayEl = document.getElementById('vital-weekday');
+  const timeEl = document.getElementById('vital-time');
+  if (dateEl) dateEl.textContent = now.toLocaleDateString('uz-UZ', { day:'2-digit', month:'2-digit', year:'numeric' });
+  if (weekdayEl) weekdayEl.textContent = now.toLocaleDateString('uz-UZ', { weekday:'long' });
+  if (timeEl) timeEl.textContent = now.toLocaleTimeString('uz-UZ', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function updatePersonVitals(name='', sub='Camera standby') {
+  const personEl = document.getElementById('vital-person');
+  const subEl = document.getElementById('vital-person-sub');
+  activePersonName = name || '';
+  if (personEl) personEl.textContent = name || 'No person';
+  if (subEl) subEl.textContent = sub;
+}
+
+function updateTempVitals(snapshot=null) {
+  const tile = document.getElementById('vital-temp-tile');
+  const tempEl = document.getElementById('vital-temp');
+  const subEl = document.getElementById('vital-temp-sub');
+  if (!tile || !tempEl || !subEl) return;
+  tile.classList.remove('fever','warn');
+  if (!snapshot || !snapshot.ok || !Number.isFinite(Number(snapshot.max))) {
+    tempEl.textContent = '—';
+    subEl.textContent = thermalEnabled ? 'Thermal kutilyapti' : "Thermal o'chirilgan";
+    return;
+  }
+  const max = Number(snapshot.max);
+  tempEl.textContent = `${max.toFixed(1)}°C`;
+  if (max >= 37.5) {
+    tile.classList.add('fever');
+    subEl.textContent = 'Isitma ehtimoli bor';
+  } else if (max >= 35) {
+    tile.classList.add('warn');
+    subEl.textContent = 'Skrining faol';
+  } else {
+    subEl.textContent = 'Normal skrining';
+  }
+}
+
+function updateDirectionVitals(direction='—', queueText='Doctor route and queue will appear here', status='Waiting', statusType='') {
+  const dirEl = document.getElementById('vital-direction');
+  const queueEl = document.getElementById('vital-queue');
+  const statusEl = document.getElementById('vital-status');
+  if (dirEl) dirEl.textContent = direction;
+  if (queueEl) queueEl.textContent = queueText;
+  if (statusEl) {
+    statusEl.textContent = status;
+    statusEl.className = `vital-status-pill ${statusType || ''}`.trim();
+  }
+}
+
+function updateDirectionFromText(text='') {
+  const speciality = text.match(/Sizga\s+(.+?)\s+shifokori/i)?.[1]
+    || text.match(/Recommended specialist:\s*([^\n.]+)/i)?.[1]
+    || text.match(/Рекомендуемый специалист:\s*([^\n.]+)/i)?.[1];
+  const doctor = text.match(/Shifokor:\s*([^\n]+)/i)?.[1]
+    || text.match(/Doctor:\s*([^\n]+)/i)?.[1]
+    || text.match(/Врач:\s*([^\n]+)/i)?.[1];
+  const room = text.match(/Xona:\s*([^\n]+)/i)?.[1]
+    || text.match(/Room:\s*([^\n]+)/i)?.[1]
+    || text.match(/Кабинет:\s*([^\n]+)/i)?.[1];
+  const queue = text.match(/Navbat raqamingiz:\s*(\d+)/i)?.[1]
+    || text.match(/Your queue number:\s*(\d+)/i)?.[1]
+    || text.match(/Ваш номер очереди:\s*(\d+)/i)?.[1];
+  if (speciality || doctor || room || queue) {
+    const direction = speciality || doctor || 'Doctor';
+    const detail = [
+      doctor ? `Doctor: ${doctor}` : '',
+      room ? `Room: ${room}` : '',
+      queue ? `Queue: ${queue}` : '',
+    ].filter(Boolean).join(' · ');
+    updateDirectionVitals(direction, detail || 'Direction ready', 'Queued', 'ok');
+  }
 }
 
 document.getElementById('tgl-live').addEventListener('change', function() {
@@ -1777,6 +2015,7 @@ function tempToRGB(t, tMin, tMax) {
 function drawThermal(data) {
   if (!thermalEnabled) {
     setThermalOffUi("Thermal camera o'chirilgan.<br>Yoqish uchun ON tugmasini bosing.", 'Off');
+    updateTempVitals(null);
     return;
   }
 
@@ -1792,6 +2031,7 @@ function drawThermal(data) {
     );
     const install = data.install ? `<br><code>${data.install}</code>` : '';
     setThermalOffUi(`${msg}${install}`, 'Offline');
+    updateTempVitals(null);
     return;
   }
 
@@ -1809,6 +2049,7 @@ function drawThermal(data) {
     center: Number(center),
     timestamp: Date.now()
   };
+  updateTempVitals(latestThermalSnapshot);
 
   // Draw 32×24 heatmap pixel by pixel
   TCANVAS.width  = cols;
@@ -1948,6 +2189,7 @@ let lastFaceSeenAt = 0;
 let lastFaceIdentifyAt = 0;
 let lastDetectedFaceCount = 0;
 let activeKnownPersonId = null;
+let activePersonName = '';
 let pendingUnknownFace = false;
 const FACE_ABSENCE_MS = 1800;
 const FACE_IDENTIFY_COOLDOWN_MS = 2000;
@@ -1966,6 +2208,7 @@ function setFaceUi(state, person=null, detail='') {
     name.textContent = '—';
     sub.textContent = '—';
     avatar.textContent = '👤';
+    updatePersonVitals('', 'Camera standby');
     return;
   }
 
@@ -1984,24 +2227,28 @@ function setFaceUi(state, person=null, detail='') {
     name.textContent = fullName;
     sub.textContent = detail || `Face score: ${person?.score ?? '—'}`;
     avatar.textContent = '😊';
+    updatePersonVitals(fullName, 'Recognized patient');
   } else if (state === 'unknown') {
     badge.textContent = 'New person';
     badge.className = 'badge b-orange';
     name.textContent = 'Yangi bemor';
     sub.textContent = detail || "Ro'yxatdan o'tkazish kutilmoqda";
     avatar.textContent = '👤';
+    updatePersonVitals('Yangi bemor', "Ism so'ralmoqda");
   } else if (state === 'empty') {
     badge.textContent = 'No person';
     badge.className = 'badge b-muted';
     name.textContent = 'Odam topilmadi';
     sub.textContent = "Kamera oldida odam ko'rinmadi";
     avatar.textContent = '👤';
+    updatePersonVitals('', 'Camera empty');
   } else if (state === 'error') {
     badge.textContent = 'Face ID error';
     badge.className = 'badge b-red';
     name.textContent = 'Face ID ishlamadi';
     sub.textContent = detail || 'Settings yoki kamera holatini tekshiring';
     avatar.textContent = '👤';
+    updatePersonVitals('', 'Face ID error');
   }
 }
 
@@ -2041,6 +2288,7 @@ function notifyFaceIdentity(face) {
       pendingUnknownFace = false;
       drawFaceBoxes([]);
       setFaceUi('empty');
+      ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({type:'person_left'}));
     } else if (!wasPresent) {
       setFaceUi('empty');
     }
@@ -2055,6 +2303,7 @@ function notifyFaceIdentity(face) {
     const p = face.person;
     setFaceUi('known', p);
     if (activeKnownPersonId === p.person_id && !pendingUnknownFace) return;
+    enableLiveConversation();
     activeKnownPersonId = p.person_id;
     pendingUnknownFace = false;
     ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({
@@ -2068,6 +2317,7 @@ function notifyFaceIdentity(face) {
   if (face.status === 'unknown') {
     setFaceUi('unknown');
     if (pendingUnknownFace) return;
+    enableLiveConversation();
     activeKnownPersonId = null;
     pendingUnknownFace = true;
     ws && ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({
@@ -2826,6 +3076,10 @@ function clrLog(){ document.getElementById('log-box').innerHTML=''; }
 
 // ── BOOT ─────────────────────────────────────────────────────
 wsInit();
+updateDateVitals();
+setInterval(updateDateVitals, 1000);
+updateTempVitals(null);
+updatePersonVitals('', 'Camera standby');
 initHeadGauge();
 setHeadAngleUi(90, 'Angle');
 initThermalState();
