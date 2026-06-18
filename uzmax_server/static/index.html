@@ -1052,6 +1052,7 @@
       <div class="card">
         <div class="card-head"><span class="card-title">⚡ Gestures</span></div>
         <div class="presets">
+          <button class="btn btn-blue"  onclick="homeAllHands()">Home</button>
           <button class="btn btn-blue"  onclick="gesture('hello')">👋 Salom</button>
           <button class="btn btn-green" onclick="gesture('open')">🖐 Ochiq</button>
           <button class="btn btn-ghost" onclick="gesture('fist')">✊ Musht</button>
@@ -2778,11 +2779,13 @@ function sendLedPick(){
 
 // ── Hand sliders ──────────────────────────────────────────────
 const SNAMES=['Wrist Rot','Forearm','Elbow','Shoulder','Fingers','Thumb'];
-const HDEFS ={R:[90,180,90,0,0,0], L:[100,0,90,0,90,90]};
+const HDEFS ={R:[90,180,90,0,0,0], L:[100,0,90,0,180,90]};
 const HLIMS ={
   R:[[90,180],[0,180],[90,180],[0,180],[0,110],[0,110]],
-  L:[[0,100],[0,90],[0,90],[0,180],[0,90],[0,180]]
+  L:[[0,100],[0,90],[0,90],[0,180],[60,180],[0,90]]
 };
+const AUTO_HOME_DELAY_MS = 20000;
+let autoHomeTimer = null;
 
 function clampHandAngle(side,num,angle){
   const [mn,mx]=HLIMS[side][num-1];
@@ -2906,15 +2909,39 @@ async function applyHandAngles(side,angles,label){
   addLog(`${side} ${label}`,'ok');
 }
 
+function clearAutoHome(){
+  if(autoHomeTimer){
+    clearTimeout(autoHomeTimer);
+    autoHomeTimer=null;
+  }
+}
+
+function scheduleAutoHome(label='auto home'){
+  clearAutoHome();
+  autoHomeTimer=setTimeout(async()=>{
+    autoHomeTimer=null;
+    await homeAllHands(label);
+  }, AUTO_HOME_DELAY_MS);
+  addLog('auto home in 20s','');
+}
+
 async function homeHand(side){
+  clearAutoHome();
   await applyHandAngles(side,HDEFS[side],'home');
+}
+
+async function homeAllHands(label='home'){
+  clearAutoHome();
+  await applyHandAngles('R',HDEFS.R,label);
+  await applyHandAngles('L',HDEFS.L,label);
 }
 
 async function preset(side,type){
   const angles = type==='open'
     ? HDEFS[side]
-    : (side==='R'?[180,0,180,180,110,110] :[0,90,0,180,0,0]);
+    : (side==='R'?[180,0,180,180,110,110] :[0,90,0,180,60,0]);
   await applyHandAngles(side,angles,type);
+  scheduleAutoHome();
 }
 
 
@@ -2969,6 +2996,7 @@ async function gesture(name){
   };
   await runGestureSteps((acts[name]||[]).map(s=>({...s,label:name})), name);
   addLog('gesture: '+name,'ok');
+  scheduleAutoHome();
 }
 
 function renderCustomGestures(){
@@ -3021,6 +3049,7 @@ async function runCustomGesture(index){
   try {
     await runGestureSteps(parseGestureCommands(item.commands), item.name);
     addLog('gesture: '+item.name,'ok');
+    scheduleAutoHome();
   } catch(e) {
     addLog(e.message,'err');
   }

@@ -45,13 +45,14 @@ HandServo servos[] = {
   // L2 starts at 0 and moves 0 -> 90.
   // L3 starts at 90 and moves 90 -> 0.
   // L4 starts at 0 and moves 0 -> 180.
-  // L5 starts at 90 and moves 90 -> 0.
+  // L5 starts at 180 and moves 180 -> 60.
+  // L6 starts at 90 and moves 90 -> 0.
   { Servo(), 'L', 1, 33, 100,   0, 100, 100 },
   { Servo(), 'L', 2, 32,   0,   0,  90,   0 },
   { Servo(), 'L', 3, 23,  90,   0,  90,  90 },
   { Servo(), 'L', 4, 22,   0,   0, 180,   0 },
-  { Servo(), 'L', 5, 21,  90,   0,  90,  90 },
-  { Servo(), 'L', 6, 19,  90,   0, 180,  90 }
+  { Servo(), 'L', 5, 21, 180,  60, 180, 180 },
+  { Servo(), 'L', 6, 19,  90,   0,  90,  90 }
 };
 
 const int SERVO_COUNT = sizeof(servos) / sizeof(servos[0]);

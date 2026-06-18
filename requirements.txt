@@ -19,3 +19,4 @@ requests>=2.31
 adafruit-blinka>=8.40
 adafruit-circuitpython-mlx90640>=1.3
 opencv-python>=4.9
+sounddevice>=0.3
