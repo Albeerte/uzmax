@@ -8,9 +8,11 @@
 #define LED_COUNT 84
 #define LED_BRIGHTNESS 60
 
-#define HEAD_SERVO_PIN 33
+#define HEAD_SERVO_PIN 17
+#define SERVO_MIN_US 500
+#define SERVO_MAX_US 2500
 
-Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
 Servo headServo;
 
 uint8_t brightnessValue = LED_BRIGHTNESS;
@@ -219,7 +221,7 @@ void setup() {
   ESP32PWM::allocateTimer(0);
 
   headServo.setPeriodHertz(50);
-  headServo.attach(HEAD_SERVO_PIN, 1000, 2000);
+  headServo.attach(HEAD_SERVO_PIN, SERVO_MIN_US, SERVO_MAX_US);
 
   servoWriteAngle(HEAD_CENTER_ANGLE);
 

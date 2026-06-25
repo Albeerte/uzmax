@@ -211,3 +211,6 @@ __marimo__/
 /data/faces/
 /data/register_faces/*
 !/data/register_faces/registry.example.json
+
+# TLS certs (self-signed, local)
+certs/

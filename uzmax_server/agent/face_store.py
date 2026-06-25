@@ -1,3 +1,4 @@
+import json
 import uuid
 from pathlib import Path
 
@@ -17,7 +18,27 @@ class FaceVectorStore:
         self.db_path.mkdir(parents=True, exist_ok=True)
         self.collection_name = collection_name
         self.vector_size = vector_size
+        self._repair_local_meta_compatibility()
         self.client = QdrantClient(path=str(self.db_path))
+
+    def _repair_local_meta_compatibility(self) -> None:
+        meta_path = self.db_path / "meta.json"
+        if not meta_path.exists():
+            return
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+
+        changed = False
+        for collection in (meta.get("collections") or {}).values():
+            for key in ("strict_mode_config", "metadata"):
+                if key in collection:
+                    collection.pop(key, None)
+                    changed = True
+
+        if changed:
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     def _collection_exists(self) -> bool:
         try:
@@ -307,3 +328,78 @@ class FaceVectorStore:
             "snapshots": payload.get("snapshots", []),
             "metadata": payload.get("metadata", {}),
         }
+
+    def list_people(self, limit: int = 10000) -> list[dict]:
+        if not self._collection_exists():
+            return []
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            limit=limit,
+            with_payload=True,
+        )
+
+        people = {}
+        for record in records:
+            payload = record.payload or {}
+            person_id = payload.get("person_id") or str(record.id)
+            item = people.setdefault(
+                person_id,
+                {
+                    "person_id": person_id,
+                    "first_name": payload.get("first_name", ""),
+                    "last_name": payload.get("last_name", ""),
+                    "full_name": f'{payload.get("first_name", "")} {payload.get("last_name", "")}'.strip(),
+                    "snapshots": [],
+                    "metadata": payload.get("metadata", {}),
+                    "face_points": 0,
+                },
+            )
+            item["face_points"] += 1
+            for snapshot in payload.get("snapshots", []) or []:
+                if snapshot and snapshot not in item["snapshots"]:
+                    item["snapshots"].append(snapshot)
+            if payload.get("metadata") and not item.get("metadata"):
+                item["metadata"] = payload.get("metadata", {})
+
+        return sorted(
+            people.values(),
+            key=lambda item: (item.get("full_name") or item.get("person_id") or "").lower(),
+        )
+
+    def reset(self) -> None:
+        if self._collection_exists():
+            self.client.delete_collection(self.collection_name)
+
+    def delete_person(self, person_id: str) -> int:
+        if not person_id or not self._collection_exists():
+            return 0
+
+        deleted = 0
+        offset = None
+        while True:
+            records, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="person_id",
+                            match=models.MatchValue(value=person_id),
+                        )
+                    ]
+                ),
+                limit=256,
+                offset=offset,
+                with_payload=False,
+            )
+            if not records:
+                break
+            point_ids = [record.id for record in records]
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.PointIdsList(points=point_ids),
+            )
+            deleted += len(point_ids)
+            if offset is None:
+                break
+        return deleted

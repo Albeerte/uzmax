@@ -49,9 +49,11 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
 
 import serial
 import serial.tools.list_ports
@@ -63,15 +65,19 @@ except Exception:
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from agent.speech_to_text import YandexSpeechRecognizer, SttStreamingSession
+from agent.speech_to_text import YandexSpeechRecognizer, SttStreamingSession, WhisperSttSession, YandexSttSession
 from agent.text_to_speech import YandexStreamingSynthesizer, TtsStreamingSession
 from agent.llm import OpenAIClient
 from agent.face_encoder import FaceEncoder
 from agent.face_store import FaceVectorStore
+from hospital_robot import get_patients as get_hospital_patients
+from hospital_robot import get_visits as get_hospital_visits
+from hospital_robot import init_db as init_hospital_robot_db
+from hospital_robot import router as hospital_robot_router
 
 BASE_DIR = Path(__file__).resolve().parent
 os.chdir(BASE_DIR)
@@ -311,8 +317,11 @@ def configured_secret(value: str | None) -> str | None:
 FOLDER_ID            = configured_secret(os.getenv("YANDEX_CATALOG_ID"))
 API_KEY              = configured_secret(os.getenv("YANDEX_API_KEY"))
 GEMINI_API_KEY       = configured_secret(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.62"))
+FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.65"))
 FACE_LOG_ALL         = os.getenv("FACE_LOG_ALL_COMPARISONS", "false").lower() == "true"
+FACE_MIN_WIDTH_PX    = int(os.getenv("FACE_MIN_WIDTH_PX", "120"))
+FACE_MIN_BLUR_VAR    = float(os.getenv("FACE_MIN_BLUR_VAR", "85"))
+FACE_MIN_SAMPLES     = int(os.getenv("FACE_MIN_SAMPLES", "3"))
 ENV_PATH             = Path(".env")
 FEVER_THRESHOLD_C    = 37.5
 YANDEX_TTS_VOICE     = os.getenv("YANDEX_TTS_VOICE", "yulduz")
@@ -485,7 +494,7 @@ SETTINGS_KEYS = [
 
 SETTINGS_DEFAULTS = {
     "OPENAI_MODEL": "gpt-4o-mini",
-    "FACE_MATCH_THRESHOLD": "0.62",
+    "FACE_MATCH_THRESHOLD": "0.65",
     "YANDEX_TTS_VOICE": "yulduz",
     "YANDEX_TTS_VOICE_UZ": "yulduz",
     "YANDEX_TTS_VOICE_EN": "john",
@@ -536,6 +545,11 @@ def write_env_values(new_values: dict) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    try:
+        init_hospital_robot_db()
+    except Exception as exc:
+        logger.warning("Hospital robot DB init skipped: %s", exc)
+
     if not GEMINI_API_KEY:
         logger.info("Face bootstrap skipped: GEMINI_API_KEY is not configured")
     else:
@@ -554,6 +568,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(hospital_robot_router)
 
 os.makedirs("static", exist_ok=True)
 os.makedirs("images", exist_ok=True)
@@ -1353,6 +1368,22 @@ def parse_person_name_locally(text: str) -> dict | None:
     }
 
 
+def is_affirmative(text: str) -> bool:
+    q = clean_patient_text(text)
+    compact = q.replace(" ", "").replace("'", "")
+    words = set(q.split())
+    phrases = {"ha", "xa", "aha", "yes", "yeah", "ok", "okay", "togri", "to'g'ri", "tasdiqlayman", "tasdiq", "da"}
+    return q in phrases or any(word in words for word in phrases) or "to'g'ri" in q or "togri" in q or "togri" in compact
+
+
+def is_negative(text: str) -> bool:
+    q = clean_patient_text(text)
+    compact = q.replace(" ", "").replace("'", "")
+    words = set(q.split())
+    phrases = {"yoq", "yo'q", "no", "notogri", "noto'g'ri", "xato", "net"}
+    return q in phrases or any(word in words for word in phrases) or "noto'g'ri" in q or "notogri" in q or "notogri" in compact or compact == "yoq"
+
+
 def extract_name_change(text: str) -> dict | None:
     q = (text or "").strip()
     low = q.lower()
@@ -1382,6 +1413,7 @@ def extract_name_change(text: str) -> dict | None:
 
 def clean_patient_text(text: str) -> str:
     cleaned = (text or "").lower()
+    cleaned = cleaned.replace("ʻ", "'").replace("ʼ", "'").replace("‘", "'").replace("’", "'").replace("´", "'")
     cleaned = cleaned.replace("`", "'").replace("‘", "'").replace("’", "'")
     cleaned = re.sub(r"[^\w\s'\-]", " ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -1701,6 +1733,104 @@ def route_patient_request(text: str, current_person: dict | None, lang: str | No
     return format_doctor_routing_reply(result, current_person, lang)
 
 
+def doctor_public_info(doctor: dict, lang: str | None = None) -> dict:
+    return {
+        "id": doctor.get("id"),
+        "name": doctor.get("name"),
+        "specialty": doctor_specialty_label(doctor, lang),
+        "room": doctor.get("room"),
+        "work_time": doctor.get("work_time"),
+        "use_for": doctor.get("use_for"),
+    }
+
+
+# OpenAI function-calling tools. The model decides when to look up a doctor and when
+# to actually book a queue slot — routing/booking no longer fires on every keyword.
+CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "find_doctor",
+            "description": (
+                "Bemor shikoyati bo'yicha mos shifokorni topadi. Navbatga YOZMAYDI. "
+                "Bemor qaysi shifokorga borishini bilmoqchi bo'lganda yoki shikoyatdan "
+                "kerakli mutaxassisni aniqlash uchun ishlating."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symptoms": {
+                        "type": "string",
+                        "description": "Bemor shikoyati yoki belgilari (uz/ru/en).",
+                    }
+                },
+                "required": ["symptoms"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_appointment",
+            "description": (
+                "Bemorni tanlangan shifokor navbatiga yozadi va navbat raqamini qaytaradi. "
+                "Faqat bemor ko'rikka yozilishni xohlaganda yoki rozi bo'lganda chaqiring. "
+                "Bemor shunchaki ma'lumot so'rasa, chaqirmang."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {
+                        "type": "integer",
+                        "description": "Shifokor ID (find_doctor natijasidagi 'id').",
+                    }
+                },
+                "required": ["doctor_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "register_patient",
+            "description": (
+                "Yangi (tanilmagan) bemorni bazaga yozadi. Bemor ism (va iloji bo'lsa familiya) "
+                "aytib, u to'g'riligini tasdiqlagandan keyin chaqiring. Kamera yuzni ko'rib turishi kerak. "
+                "Agar natijada reason='need_more_samples' qaytsa, bemordan kameraga bir oz qarab turishini "
+                "so'rang va keyin qayta chaqiring. Bemor allaqachon tanilgan bo'lsa chaqirmang."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "first_name": {"type": "string", "description": "Bemor ismi."},
+                    "last_name": {"type": "string", "description": "Bemor familiyasi (ixtiyoriy)."},
+                },
+                "required": ["first_name"],
+            },
+        },
+    },
+]
+
+
+# Internal prompts produced by the registration flow that must be spoken verbatim
+# (a confirmation question to the patient), not paraphrased by the LLM.
+_VERBATIM_PREFIXES = (
+    "Sizning ism-familiyangiz ",
+    "Tushunarli. Iltimos,",
+    "Iltimos, ism va familiyangiz",
+    "Ismni tushunmadim.",
+    "Yuz namunasi hali kam.",
+    "Yuz embedding tayyor emas.",
+    "Yuz rasmi tayyor emas.",
+)
+
+
+def verbatim_internal_reply(user_text: str) -> str | None:
+    if any((user_text or "").startswith(prefix) for prefix in _VERBATIM_PREFIXES):
+        return user_text
+    return None
+
+
 def basic_patient_advice(text: str, lang: str | None = None) -> str | None:
     q = clean_patient_text(text)
     lang = normalize_chat_lang(lang, text)
@@ -1735,6 +1865,17 @@ def basic_patient_advice(text: str, lang: str | None = None) -> str | None:
 
 
 def local_direct_response(user_text: str, current_person=None, lang: str | None = None) -> str | None:
+    direct_prefixes = (
+        "Sizning ism-familiyangiz ",
+        "Tushunarli. Iltimos,",
+        "Iltimos, ism va familiyangiz",
+        "Ismni tushunmadim.",
+        "Yuz namunasi hali kam.",
+        "Yuz embedding tayyor emas.",
+        "Yuz rasmi tayyor emas.",
+    )
+    if any((user_text or "").startswith(prefix) for prefix in direct_prefixes):
+        return user_text
     q = clean_patient_text(user_text)
     internal_markers = (
         "oldingizda",
@@ -1807,13 +1948,62 @@ def detect_faces_in_base64(image_data: str) -> list[dict]:
         minSize=(60, 60),
     )
     return [
-        {"x": int(x), "y": int(y), "w": int(w), "h": int(h)}
+        {"x": int(x), "y": int(y), "w": int(w), "h": int(h), "area": int(w) * int(h)}
         for (x, y, w, h) in faces
     ]
 
 
-def crop_largest_face_base64(image_data: str, faces: list[dict]) -> str:
-    if cv2 is None or not faces:
+def largest_face(faces: list[dict]) -> dict | None:
+    if not faces:
+        return None
+    return max(faces, key=lambda item: int(item.get("w", 0)) * int(item.get("h", 0)))
+
+
+def face_quality(frame, face: dict | None) -> dict:
+    if cv2 is None or frame is None or not face:
+        return {"ok": False, "reason": "no_face", "blur": 0.0, "min_width": FACE_MIN_WIDTH_PX}
+    x = int(face.get("x", 0))
+    y = int(face.get("y", 0))
+    w = int(face.get("w", 0))
+    h = int(face.get("h", 0))
+    if w < FACE_MIN_WIDTH_PX:
+        return {
+            "ok": False,
+            "reason": "face_too_small",
+            "message": f"Face width is {w}px; need at least {FACE_MIN_WIDTH_PX}px.",
+            "blur": 0.0,
+            "width": w,
+            "min_width": FACE_MIN_WIDTH_PX,
+        }
+    height, width = frame.shape[:2]
+    x1, y1 = max(0, x), max(0, y)
+    x2, y2 = min(width, x + w), min(height, y + h)
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return {"ok": False, "reason": "empty_crop", "blur": 0.0, "width": w, "min_width": FACE_MIN_WIDTH_PX}
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blur = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    if blur < FACE_MIN_BLUR_VAR:
+        return {
+            "ok": False,
+            "reason": "face_blurry",
+            "message": f"Face blur score is {blur:.1f}; need at least {FACE_MIN_BLUR_VAR:.1f}.",
+            "blur": round(blur, 1),
+            "width": w,
+            "min_width": FACE_MIN_WIDTH_PX,
+        }
+    return {
+        "ok": True,
+        "reason": "good",
+        "blur": round(blur, 1),
+        "width": w,
+        "min_width": FACE_MIN_WIDTH_PX,
+        "area": w * h,
+    }
+
+
+def crop_selected_face_base64(image_data: str, face: dict | None) -> str:
+    if cv2 is None or not face:
         return image_data
 
     _, frame = decode_base64_image(image_data)
@@ -1821,7 +2011,6 @@ def crop_largest_face_base64(image_data: str, faces: list[dict]) -> str:
         return image_data
 
     height, width = frame.shape[:2]
-    face = max(faces, key=lambda item: int(item.get("w", 0)) * int(item.get("h", 0)))
     x = int(face.get("x", 0))
     y = int(face.get("y", 0))
     w = int(face.get("w", 0))
@@ -1843,6 +2032,22 @@ def crop_largest_face_base64(image_data: str, faces: list[dict]) -> str:
     if not ok:
         return image_data
     return "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
+def crop_largest_face_base64(image_data: str, faces: list[dict]) -> str:
+    return crop_selected_face_base64(image_data, largest_face(faces))
+
+
+def averaged_embedding(samples: list[dict]) -> list[float]:
+    embeddings = [sample.get("embedding") for sample in samples if sample.get("embedding")]
+    if not embeddings:
+        return []
+    arr = np.asarray(embeddings, dtype=np.float32)
+    mean = arr.mean(axis=0)
+    norm = np.linalg.norm(mean)
+    if norm:
+        mean = mean / norm
+    return mean.tolist()
 
 
 def save_base64_image(image_data: str) -> str:
@@ -1878,42 +2083,51 @@ def persist_registered_face_snapshot(snapshot_path: str | None, person_id: str) 
 
 def save_registration_pending_snapshot(image_data: str) -> str | None:
     image_bytes, _ = decode_base64_image(image_data)
-    for old_file in sorted(REGISTER_FACES_DIR.glob("pending_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            old_file.unlink()
-        except OSError:
-            logger.warning("Could not delete old pending face snapshot: %s", old_file)
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
     filename = REGISTER_FACES_DIR / f"pending_{ts}.jpg"
     try:
         filename.write_bytes(image_bytes)
+        for old_file in sorted(REGISTER_FACES_DIR.glob("pending_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)[12:]:
+            try:
+                old_file.unlink()
+            except OSError:
+                logger.warning("Could not delete old pending face snapshot: %s", old_file)
         return str(filename)
     except OSError as exc:
         logger.warning("Could not save pending registration snapshot: %s", exc)
         return None
 
 
-def upsert_registered_face_registry(person: dict, snapshot_path: str | None) -> None:
-    if not person or not person.get("person_id") or not snapshot_path:
+def write_registered_face_registry(faces: list[dict]) -> None:
+    REGISTER_FACES_DIR.mkdir(parents=True, exist_ok=True)
+    REGISTER_FACES_JSON.write_text(json.dumps({"faces": faces}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def upsert_registered_face_registry(person: dict, snapshot_path: str | None = None) -> None:
+    if not person or not person.get("person_id"):
         return
-    snapshot = Path(snapshot_path).resolve()
-    register_dir = REGISTER_FACES_DIR.resolve()
-    if not snapshot.exists() or snapshot.parent != register_dir:
-        logger.warning("Registry write skipped because snapshot is not in register_faces: %s", snapshot)
-        return
-    file_name = snapshot.name
+    file_name = None
+    if snapshot_path:
+        snapshot = Path(snapshot_path).resolve()
+        register_dir = REGISTER_FACES_DIR.resolve()
+        if not snapshot.exists() or snapshot.parent != register_dir:
+            logger.warning("Registry write skipped because snapshot is not in register_faces: %s", snapshot)
+            return
+        file_name = snapshot.name
     try:
         data = json.loads(REGISTER_FACES_JSON.read_text(encoding="utf-8")) if REGISTER_FACES_JSON.exists() else {}
     except Exception:
         data = {}
     faces = list(data.get("faces") or [])
+    existing = next((item for item in faces if item.get("person_id") == person.get("person_id")), {})
     entry = {
         "person_id": person.get("person_id"),
-        "file": file_name,
+        "file": file_name or existing.get("file"),
         "first_name": person.get("first_name", ""),
         "last_name": person.get("last_name", ""),
         "metadata": person.get("metadata") or {},
-        "registered_at": datetime.now().isoformat(timespec="seconds"),
+        "registered_at": existing.get("registered_at") or datetime.now().isoformat(timespec="seconds"),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     replaced = False
     for idx, item in enumerate(faces):
@@ -1923,7 +2137,7 @@ def upsert_registered_face_registry(person: dict, snapshot_path: str | None) -> 
             break
     if not replaced:
         faces.append(entry)
-    REGISTER_FACES_JSON.write_text(json.dumps({"faces": faces}, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_registered_face_registry(faces)
     logger.info(
         "Registered face written to registry.json: person_id=%s file=%s name=%s %s",
         entry["person_id"],
@@ -2011,6 +2225,445 @@ def load_registered_faces() -> tuple[int, int]:
     return loaded, skipped
 
 
+def read_registered_face_registry() -> list[dict]:
+    if not REGISTER_FACES_JSON.exists():
+        return []
+    try:
+        data = json.loads(REGISTER_FACES_JSON.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Could not read registered faces registry: %s", exc)
+        return []
+    return list(data.get("faces") or []) if isinstance(data, dict) else []
+
+
+def safe_person_file_id(person_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", person_id).strip("_") or "person"
+
+
+def image_suffix_from_data_url(image_data: str) -> str:
+    header = image_data.split(",", 1)[0].lower() if "," in image_data else ""
+    if "image/png" in header:
+        return ".png"
+    if "image/webp" in header:
+        return ".webp"
+    return ".jpg"
+
+
+def save_patient_face_image(image_data: str | None, person_id: str) -> str | None:
+    if not image_data:
+        return None
+    image_bytes, _ = decode_base64_image(image_data)
+    REGISTER_FACES_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    filename = REGISTER_FACES_DIR / f"{safe_person_file_id(person_id)}_{ts}{image_suffix_from_data_url(image_data)}"
+    filename.write_bytes(image_bytes)
+    return str(filename)
+
+
+def split_patient_name(full_name: str) -> tuple[str, str]:
+    parts = [part for part in full_name.strip().split() if part]
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
+
+
+def patient_payload_to_person(payload: dict, person_id: str | None = None, existing: dict | None = None) -> dict:
+    existing = existing or {}
+    metadata = dict(existing.get("metadata") or {})
+    incoming_metadata = payload.get("metadata")
+    if isinstance(incoming_metadata, dict):
+        metadata.update(incoming_metadata)
+
+    first_name = str(payload.get("first_name") or existing.get("first_name") or "").strip()
+    last_name = str(payload.get("last_name") or existing.get("last_name") or "").strip()
+    full_name = str(payload.get("full_name") or "").strip()
+    if full_name and not first_name:
+        first_name, last_from_full = split_patient_name(full_name)
+        if not last_name:
+            last_name = last_from_full
+
+    for key, meta_key in (
+        ("age", "age"),
+        ("phone", "phone"),
+        ("notes", "notes"),
+        ("birthday", "birthday"),
+        ("date_of_birth", "date_of_birth"),
+    ):
+        value = payload.get(key)
+        if value not in (None, ""):
+            metadata[meta_key] = value
+        elif key in payload and value == "":
+            metadata.pop(meta_key, None)
+
+    if not first_name and not last_name:
+        raise ValueError("Patient name is required")
+
+    metadata["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if not existing:
+        metadata.setdefault("created_at", metadata["updated_at"])
+
+    return {
+        "person_id": person_id or str(uuid.uuid4()),
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": f"{first_name} {last_name}".strip(),
+        "metadata": metadata,
+    }
+
+
+def registry_entry_for_person(person_id: str) -> dict | None:
+    return next((item for item in read_registered_face_registry() if item.get("person_id") == person_id), None)
+
+
+def remove_registry_file(entry: dict | None) -> str | None:
+    file_name = (entry or {}).get("file")
+    if not file_name:
+        return None
+    try:
+        target = (REGISTER_FACES_DIR / file_name).resolve()
+        if target.exists() and target.is_file() and target.parent == REGISTER_FACES_DIR.resolve():
+            target.unlink()
+            return str(target)
+    except Exception as exc:
+        logger.warning("Could not delete registry face image %s: %s", file_name, exc)
+    return None
+
+
+def upsert_patient_record(payload: dict, person_id: str | None = None) -> dict:
+    existing_registry = registry_entry_for_person(person_id) if person_id else None
+    existing_store = get_face_store().get_person(person_id) if person_id else None
+    existing = existing_store or existing_registry or {}
+    person = patient_payload_to_person(payload, person_id=person_id, existing=existing)
+    image_path = save_patient_face_image(payload.get("image"), person["person_id"])
+
+    vector_status = "unchanged"
+    if image_path:
+        remove_registry_file(existing_registry)
+        if GEMINI_API_KEY:
+            try:
+                embedding = get_face_encoder().extract_embedding_from_path(image_path)
+                get_face_store().delete_person(person["person_id"])
+                get_face_store().register(
+                    embedding=embedding,
+                    first_name=person["first_name"],
+                    last_name=person["last_name"],
+                    snapshot_path=image_path,
+                    metadata=person["metadata"],
+                    person_id=person["person_id"],
+                )
+                vector_status = "updated"
+            except Exception as exc:
+                vector_status = f"image saved, embedding failed: {exc}"
+                logger.warning("Could not update face embedding for %s: %s", person["person_id"], exc)
+        else:
+            vector_status = "image saved, GEMINI_API_KEY missing"
+    else:
+        try:
+            updated_name = get_face_store().update_name(person["person_id"], person["first_name"], person["last_name"])
+            updated_meta = get_face_store().update_metadata(person["person_id"], person["metadata"])
+            if updated_name or updated_meta:
+                vector_status = "metadata updated"
+        except Exception as exc:
+            logger.warning("Could not update vector metadata for %s: %s", person["person_id"], exc)
+
+    upsert_registered_face_registry(person, image_path)
+    return {"person": person, "image_path": image_path, "vector_status": vector_status}
+
+
+def delete_patient_record(person_id: str) -> dict:
+    deleted = {"registry": False, "image": None, "vectors": 0, "queue": 0}
+
+    faces = read_registered_face_registry()
+    kept_faces = []
+    removed_entry = None
+    for item in faces:
+        if item.get("person_id") == person_id:
+            removed_entry = item
+        else:
+            kept_faces.append(item)
+    if removed_entry is not None:
+        write_registered_face_registry(kept_faces)
+        deleted["registry"] = True
+        deleted["image"] = remove_registry_file(removed_entry)
+
+    try:
+        deleted["vectors"] = get_face_store().delete_person(person_id)
+    except Exception as exc:
+        logger.warning("Could not delete face vectors for %s: %s", person_id, exc)
+
+    queue = load_doctor_queue()
+    queue_name = person_id.removeprefix("queue:") if person_id.startswith("queue:") else None
+    kept_queue = [
+        item for item in queue
+        if item.get("person_id") != person_id and not (queue_name and item.get("patient_name") == queue_name)
+    ]
+    if len(kept_queue) != len(queue):
+        save_doctor_queue(kept_queue)
+        deleted["queue"] = len(queue) - len(kept_queue)
+
+    return deleted
+
+
+def safe_image_url(path_value: str | None) -> str | None:
+    if not path_value:
+        return None
+    try:
+        path = Path(path_value)
+        path = (BASE_DIR / path).resolve() if not path.is_absolute() else path.resolve()
+        allowed_dirs = [REGISTER_FACES_DIR.resolve(), IMAGES_DIR.resolve()]
+        if not path.exists() or not path.is_file():
+            return None
+        if not any(path.is_relative_to(directory) for directory in allowed_dirs):
+            return None
+        return "/api/patients/image?path=" + quote(str(path), safe="")
+    except Exception:
+        return None
+
+
+def parse_datetime_value(value) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value))
+        except Exception:
+            return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for candidate in (text, text.replace("Z", "+00:00")):
+        try:
+            return datetime.fromisoformat(candidate)
+        except Exception:
+            pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text[: len(fmt)], fmt)
+        except Exception:
+            pass
+    return None
+
+
+def metadata_age(metadata: dict) -> int | str | None:
+    for key in ("age", "patient_age", "yosh"):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return value
+    for key in ("birth_date", "date_of_birth", "dob", "birthday"):
+        born = parse_datetime_value(metadata.get(key))
+        if born:
+            today = datetime.now().date()
+            birth_date = born.date()
+            return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+    return None
+
+
+def merge_patient_record(records: dict, person_id: str, values: dict) -> dict:
+    record = records.setdefault(
+        person_id,
+        {
+            "person_id": person_id,
+            "first_name": "",
+            "last_name": "",
+            "full_name": "",
+            "age": None,
+            "snapshots": [],
+            "image_url": None,
+            "metadata": {},
+            "face_points": 0,
+            "registry": None,
+            "queue": [],
+            "hospital_patient": None,
+            "hospital_visits": [],
+            "last_visited_at": None,
+            "source": [],
+        },
+    )
+    for key in ("first_name", "last_name", "full_name"):
+        if values.get(key):
+            record[key] = values[key]
+    if values.get("metadata"):
+        record["metadata"] = {**record.get("metadata", {}), **values["metadata"]}
+    if values.get("age") not in (None, ""):
+        record["age"] = values["age"]
+    for snapshot in values.get("snapshots") or []:
+        if snapshot and snapshot not in record["snapshots"]:
+            record["snapshots"].append(snapshot)
+    if values.get("image_url"):
+        record["image_url"] = values["image_url"]
+    if values.get("face_points"):
+        record["face_points"] = max(int(record.get("face_points") or 0), int(values["face_points"]))
+    for source in values.get("source") or []:
+        if source not in record["source"]:
+            record["source"].append(source)
+    return record
+
+
+def build_patient_records() -> list[dict]:
+    records: dict[str, dict] = {}
+    name_index: dict[str, str] = {}
+
+    try:
+        people = get_face_store().list_people()
+    except Exception as exc:
+        logger.warning("Could not list face people: %s", exc)
+        people = []
+
+    for person in people:
+        person_id = person.get("person_id") or ""
+        if not person_id:
+            continue
+        metadata = person.get("metadata") or {}
+        snapshots = person.get("snapshots") or []
+        image_url = next((url for url in (safe_image_url(path) for path in snapshots) if url), None)
+        record = merge_patient_record(records, person_id, {
+            **person,
+            "age": metadata_age(metadata),
+            "image_url": image_url,
+            "source": ["face_id"],
+        })
+        full_name = (record.get("full_name") or "").strip().lower()
+        if full_name:
+            name_index[full_name] = person_id
+
+    for entry in read_registered_face_registry():
+        person_id = entry.get("person_id") or f"registry:{entry.get('file', '')}"
+        image_path = str((REGISTER_FACES_DIR / str(entry.get("file") or "")).resolve()) if entry.get("file") else None
+        metadata = entry.get("metadata") or {}
+        record = merge_patient_record(records, person_id, {
+            "first_name": entry.get("first_name", ""),
+            "last_name": entry.get("last_name", ""),
+            "full_name": f'{entry.get("first_name", "")} {entry.get("last_name", "")}'.strip(),
+            "metadata": metadata,
+            "age": metadata_age(metadata),
+            "snapshots": [image_path] if image_path else [],
+            "image_url": safe_image_url(image_path),
+            "source": ["registry"],
+        })
+        record["registry"] = entry
+        if record.get("full_name"):
+            name_index[record["full_name"].strip().lower()] = person_id
+
+    for item in load_doctor_queue():
+        person_id = item.get("person_id") or ""
+        name = (item.get("patient_name") or "").strip()
+        if not person_id:
+            person_id = name_index.get(name.lower()) or f"queue:{name or item.get('created_at', '')}"
+        record = merge_patient_record(records, person_id, {
+            "full_name": name,
+            "metadata": {"phone": item.get("patient_phone")} if item.get("patient_phone") else {},
+            "source": ["doctor_queue"],
+        })
+        record["queue"].append(item)
+
+    try:
+        hospital_patients = get_hospital_patients()
+        hospital_visits = get_hospital_visits()
+    except Exception as exc:
+        logger.warning("Could not load hospital patients/visits: %s", exc)
+        hospital_patients, hospital_visits = [], []
+
+    for item in hospital_patients:
+        name = (item.get("full_name") or "").strip()
+        person_id = name_index.get(name.lower()) or f"hospital:{item.get('id')}"
+        record = merge_patient_record(records, person_id, {
+            "full_name": name,
+            "source": ["hospital_intake"],
+        })
+        record["hospital_patient"] = item
+
+    for visit in hospital_visits:
+        name = (visit.get("full_name") or "").strip()
+        person_id = name_index.get(name.lower()) or f"hospital_visit:{name or visit.get('id')}"
+        record = merge_patient_record(records, person_id, {
+            "full_name": name,
+            "source": ["hospital_visits"],
+        })
+        record["hospital_visits"].append(visit)
+
+    for record in records.values():
+        metadata = record.get("metadata") or {}
+        if record.get("age") in (None, ""):
+            record["age"] = metadata_age(metadata)
+        last_candidates = [
+            metadata.get("last_seen_at"),
+            metadata.get("last_visit_at"),
+            metadata.get("updated_at"),
+            metadata.get("created_at"),
+            (record.get("registry") or {}).get("updated_at"),
+            (record.get("registry") or {}).get("registered_at"),
+            (record.get("hospital_patient") or {}).get("created_at"),
+            *[item.get("created_at") for item in record.get("queue") or []],
+            *[item.get("created_at") for item in record.get("hospital_visits") or []],
+            *[
+                item.get("time")
+                for item in (metadata.get("thermal_screenings") or [])
+                if isinstance(item, dict)
+            ],
+        ]
+        parsed = [dt for dt in (parse_datetime_value(value) for value in last_candidates) if dt]
+        record["last_visited_at"] = max(parsed).isoformat(timespec="seconds") if parsed else None
+        record["snapshot_count"] = len(record.get("snapshots") or [])
+
+    return sorted(records.values(), key=lambda item: item.get("last_visited_at") or "", reverse=True)
+
+
+def reset_face_id_data() -> dict:
+    global face_store
+
+    deleted_files = []
+    deleted_dirs = []
+    errors = []
+
+    store = face_store
+    if store is not None:
+        try:
+            store.reset()
+        except Exception as exc:
+            errors.append(f"vector collection: {exc}")
+        try:
+            close = getattr(store.client, "close", None)
+            if close:
+                close()
+        except Exception:
+            pass
+        face_store = None
+
+    qdrant_dir = DATA_DIR / "faces" / "qdrant"
+    try:
+        if qdrant_dir.exists():
+            shutil.rmtree(qdrant_dir)
+            deleted_dirs.append(str(qdrant_dir))
+        qdrant_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        errors.append(f"{qdrant_dir}: {exc}")
+
+    try:
+        REGISTER_FACES_DIR.mkdir(parents=True, exist_ok=True)
+        for item in REGISTER_FACES_DIR.iterdir():
+            if item.name == "registry.example.json":
+                continue
+            try:
+                if item.is_dir():
+                    shutil.rmtree(item)
+                    deleted_dirs.append(str(item))
+                else:
+                    item.unlink()
+                    deleted_files.append(str(item))
+            except Exception as exc:
+                errors.append(f"{item}: {exc}")
+    except Exception as exc:
+        errors.append(f"{REGISTER_FACES_DIR}: {exc}")
+
+    return {
+        "deleted_files": deleted_files,
+        "deleted_dirs": deleted_dirs,
+        "errors": errors,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  FACE API
 # ═══════════════════════════════════════════════════════════════════
@@ -2018,6 +2671,13 @@ def load_registered_faces() -> tuple[int, int]:
 @app.get("/health")
 async def health():
     return JSONResponse({"status": "ok"})
+
+
+@app.post("/api/faces/reset")
+async def reset_faces():
+    result = await asyncio.to_thread(reset_face_id_data)
+    status_code = 500 if result["errors"] else 200
+    return JSONResponse({"ok": not result["errors"], **result}, status_code=status_code)
 
 
 @app.post("/api/faces")
@@ -2030,6 +2690,33 @@ async def save_face_snapshot(payload: dict):
     except Exception:
         return JSONResponse({"ok": False, "error": "invalid image"}, status_code=400)
     return JSONResponse({"ok": True, "path": filename})
+
+
+@app.post("/api/faces/detect")
+async def detect_faces(payload: dict):
+    """Fast, local-only face detection (OpenCV Haar) for live box drawing.
+
+    No Gemini embedding / Qdrant lookup, so it can run at a high frame rate. The
+    browser calls this frequently for responsive boxes and only calls the heavier
+    /api/faces/identify when a face is actually present and the cooldown elapsed.
+    """
+    image_data = payload.get("image")
+    if not image_data:
+        return JSONResponse({"faces": [], "status": "no_face"})
+
+    detected = await asyncio.to_thread(detect_faces_in_base64, image_data)
+    if not detected:
+        return JSONResponse({"faces": [], "status": "no_face"})
+
+    selected = largest_face(detected)
+    _, frame = decode_base64_image(image_data)
+    quality = face_quality(frame, selected)
+    return JSONResponse({
+        "faces": detected,
+        "selected_face": selected,
+        "quality": quality,
+        "status": "present",
+    })
 
 
 @app.post("/api/faces/identify")
@@ -2045,7 +2732,22 @@ async def identify_faces(payload: dict):
         if cv2 is not None and not detected_faces:
             results.append({"status": "no_face", "faces": []})
             continue
-        face_image_data = crop_largest_face_base64(image_data, detected_faces)
+
+        selected_face = largest_face(detected_faces)
+        _, frame = decode_base64_image(image_data)
+        quality = face_quality(frame, selected_face)
+        if cv2 is not None and not quality.get("ok"):
+            results.append({
+                "status": "bad_quality",
+                "reason": quality.get("reason"),
+                "message": quality.get("message"),
+                "faces": detected_faces,
+                "selected_face": selected_face,
+                "quality": quality,
+            })
+            continue
+
+        face_image_data = crop_selected_face_base64(image_data, selected_face)
         try:
             snapshot_path = save_base64_image(face_image_data)
             embedding     = get_face_encoder().extract_embedding_from_base64(face_image_data)
@@ -2071,6 +2773,8 @@ async def identify_faces(payload: dict):
                 "snapshot_path": snapshot_path,
                 "person": match,
                 "faces": detected_faces,
+                "selected_face": selected_face,
+                "quality": quality,
             })
         else:
             pending_snapshot_path = save_registration_pending_snapshot(face_image_data) or snapshot_path
@@ -2079,9 +2783,71 @@ async def identify_faces(payload: dict):
                 "snapshot_path": pending_snapshot_path,
                 "embedding": embedding,
                 "faces": detected_faces,
+                "selected_face": selected_face,
+                "quality": quality,
+                "min_samples": FACE_MIN_SAMPLES,
             })
 
     return JSONResponse({"faces": results})
+
+
+@app.get("/api/patients/full")
+async def patients_full():
+    records = await asyncio.to_thread(build_patient_records)
+    return JSONResponse({"ok": True, "count": len(records), "patients": records})
+
+
+@app.post("/api/patients")
+async def create_patient(payload: dict):
+    try:
+        result = await asyncio.to_thread(upsert_patient_record, payload, None)
+        records = await asyncio.to_thread(build_patient_records)
+        patient = next((item for item in records if item.get("person_id") == result["person"]["person_id"]), result["person"])
+        return JSONResponse({"ok": True, "patient": patient, "vector_status": result["vector_status"]})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.exception("Create patient failed")
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+
+
+@app.put("/api/patients/{person_id:path}")
+async def update_patient(person_id: str, payload: dict):
+    try:
+        result = await asyncio.to_thread(upsert_patient_record, payload, person_id)
+        records = await asyncio.to_thread(build_patient_records)
+        patient = next((item for item in records if item.get("person_id") == result["person"]["person_id"]), result["person"])
+        return JSONResponse({"ok": True, "patient": patient, "vector_status": result["vector_status"]})
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+    except Exception as exc:
+        logger.exception("Update patient failed: %s", person_id)
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+
+
+@app.delete("/api/patients/{person_id:path}")
+async def delete_patient(person_id: str):
+    try:
+        deleted = await asyncio.to_thread(delete_patient_record, person_id)
+        return JSONResponse({"ok": True, "deleted": deleted})
+    except Exception as exc:
+        logger.exception("Delete patient failed: %s", person_id)
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+
+
+@app.get("/api/patients/image")
+async def patient_image(path: str):
+    try:
+        image_path = Path(path)
+        image_path = (BASE_DIR / image_path).resolve() if not image_path.is_absolute() else image_path.resolve()
+        allowed_dirs = [REGISTER_FACES_DIR.resolve(), IMAGES_DIR.resolve()]
+        if not image_path.exists() or not image_path.is_file():
+            return JSONResponse({"ok": False, "message": "Image not found"}, status_code=404)
+        if not any(image_path.is_relative_to(directory) for directory in allowed_dirs):
+            return JSONResponse({"ok": False, "message": "Image path is not allowed"}, status_code=403)
+        return FileResponse(image_path)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
 
 
 @app.get("/api/doctor/directory")
@@ -2163,13 +2929,17 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
         "va kerakli shifokorga yo'naltirish. "
         "Loyiha: 'Yuqumli kasalliklar shifoxonasi uchun aqlli robot yaratish'. "
         "Rahbar: TATU, Azimov Bunyod Raximjonovich. "
-        "Javoblar juda qisqa, jonli, do'stona va aniq bo'lsin. "
-        "Bemor shikoyatiga yo'naltirish javobini tanlangan tildagi salom bilan boshlang: "
-        "uzbekcha 'Assalomu alaykum', inglizcha 'Hello', ruscha 'Здравствуйте'. "
+        "Javoblar qisqa, jonli, tabiiy va do'stona bo'lsin — xuddi jonli hamshira kabi suhbatlashing. "
+        "Salomlashishni faqat suhbat boshida bir marta ayting; keyingi javoblarda salomni ('Assalomu alaykum' va h.k.) takrorlamang. "
+        "Bir xil tayyor jumlalarni har safar takrorlamang (masalan 'bu tashxis emas' — agar kerak bo'lsa faqat bir marta ayting). "
+        "Suhbat tarixini eslab, avvalgi gaplaringizni so'zma-so'z qaytarmang, tabiiy davom eting. "
         "Odatda 1-2 qisqa gapdan oshmang. "
-        "Thermal natijani har doim dastlabki skrining deb ayting, tashxis qo'ymang. "
-        "Bu diagnostika emasligini, faqat to'g'ri shifokorga yo'naltirish ekanini ayting. "
-        "Agar UzMAX routing natijasi berilsa, undagi shifokor, xona, ish vaqti va navbat raqamini o'zgartirmay ayting. "
+        "Thermal natijani dastlabki skrining deb ayting, tashxis qo'ymang. "
+        "Qaysi shifokor kerakligini aniqlash uchun 'find_doctor' funksiyasidan foydalaning. "
+        "Bemorni navbatga faqat u ko'rikka yozilishni xohlasa yoki rozi bo'lsa 'book_appointment' bilan yozing; "
+        "shunchaki savol-javobda navbatga yozmang. book_appointment qaytargan shifokor, xona, ish vaqti va "
+        "navbat raqamini o'zgartirmay ayting. Bemor oddiy savol bersa (masalan kasalliklar farqi), tibbiy ma'lumotni "
+        "qisqa tushuntiring, navbatga yozmang. "
         "Isitma yoki xavotirli belgi bo'lsa, qabul shifokori yoki infeksionistga yo'naltiring. "
         f"Shifokorlar: {json.dumps(DOCTOR_DIRECTORY, ensure_ascii=False)}. "
         "Savol bersangiz, faqat bitta oddiy savol bering. "
@@ -2180,9 +2950,13 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
     if onboarding:
         return (
             base
-            + " Yangi bemor bilan tanishyapsiz. Avval salom bering, o'zingizni UzMAX deb tanishtiring, "
-            + "keyin faqat ismini so'rang. Familiya shart emas. Matn shunday mazmunda bo'lsin: "
-            + "Men yuqumli kasalliklar shifoxonasi uchun UzMAX robotman, iltimos ismingizni ayting."
+            + " Yangi, tanilmagan bemor bilan tanishyapsiz. Tabiiy va jonli suhbatlashing — qattiq qolip bo'yicha takrorlamang. "
+            + "O'zingizni qisqa tanishtiring (yuqumli kasalliklar shifoxonasi uchun UzMAX roboti) va ism-familiyasini so'rang. "
+            + "Bemor aytgan ismni tabiiy takrorlab tasdiqlating (masalan: 'Ismingiz Abdulla, to'g'rimi?'). "
+            + "Bemor tasdiqlagach (masalan 'ha'), register_patient funksiyasini ism va (bo'lsa) familiya bilan chaqiring. "
+            + "Agar bemor boshqa ism aytsa yoki tuzatsa, yangi ismni qabul qiling — avvalgi variantda qotib qolmang. "
+            + "Agar register_patient reason='need_more_samples' qaytarsa, bemordan bir oz kameraga qarab turishini so'rang, keyin qayta chaqiring. "
+            + "Ro'yxatdan o'tgani haqida faqat register_patient ok=true qaytargandan so'ng ayting, so'ng shikoyatini so'rang."
         )
 
     if current_person:
@@ -2191,8 +2965,9 @@ def build_system_prompt(current_person: dict | None, onboarding: bool, current_l
         meta_ctx  = f" Qo'shimcha ma'lumot: {json.dumps(metadata, ensure_ascii=False)}." if metadata else ""
         return (
             base
-            + f" Siz bu odamni taniysiz: {full_name}. Iliq salomlashing, thermal skrining holatini qisqa ayting "
-            + "va bitta savol bering: nima bezovta qilyapti?"
+            + f" Siz bu odamni taniysiz: {full_name}. Agar bu suhbatning boshi bo'lsa, ismi bilan bir marta "
+            + "iliq salomlashing va nima bezovta qilayotganini so'rang; aks holda salomsiz tabiiy davom eting. "
+            + "Thermal skrining holatini faqat kerak bo'lsa qisqa ayting."
             + meta_ctx
         )
 
@@ -2286,7 +3061,13 @@ async def websocket_endpoint(websocket: WebSocket):
             partial_stt_task = None
 
         stt_partial_queue = asyncio.Queue()
-        stt_session = SttStreamingSession(recognizer, 16000, loop, stt_partial_queue, current_lang)
+        # STT engine (non-streaming): buffer 16 kHz mono PCM, recognise once on
+        # end_speech. STT_PROVIDER=yandex uses Yandex v1 sync REST (fast, accurate for
+        # Uzbek); anything else uses OpenAI Whisper. Both avoid the flaky v2 gRPC stream.
+        if os.getenv("STT_PROVIDER", "whisper").lower() == "yandex":
+            stt_session = YandexSttSession(recognizer, 16000, loop, stt_partial_queue, current_lang)
+        else:
+            stt_session = WhisperSttSession(llm, 16000, loop, stt_partial_queue, current_lang)
         stt_session.start()
 
         async def send_partial_stt():
@@ -2338,15 +3119,55 @@ async def websocket_endpoint(websocket: WebSocket):
         nonlocal current_person, pending_registration
         if not pending_registration:
             return None, None
-        try:
-            extracted = await llm.extract_person_name(name_text)
-        except Exception as exc:
-            logger.warning("Name extraction via LLM failed: %s", exc)
-            extracted = None
-        if not extracted:
-            extracted = parse_person_name_locally(name_text)
-        if not extracted or not extracted.get("is_confident") or not extracted.get("first_name"):
-            return None, "Ismni tushunmadim. Iltimos, faqat ismingizni ayting."
+        samples = list(pending_registration.get("samples") or [])
+        if not samples and pending_registration.get("embedding"):
+            samples = [{
+                "embedding": pending_registration.get("embedding"),
+                "snapshot_path": pending_registration.get("snapshot_path"),
+                "quality": pending_registration.get("quality") or {},
+            }]
+
+        candidate = pending_registration.get("candidate_name")
+        if candidate:
+            full_name = f'{candidate.get("first_name", "")} {candidate.get("last_name", "")}'.strip()
+            if is_negative(name_text):
+                pending_registration.pop("candidate_name", None)
+                return None, "Tushunarli. Iltimos, ism va familiyangizni qayta ayting."
+            if not is_affirmative(name_text):
+                return None, f"Sizning ism-familiyangiz {full_name}mi? To'g'ri bo'lsa ha, noto'g'ri bo'lsa yo'q deng."
+            if len(samples) < FACE_MIN_SAMPLES:
+                return None, f"Yuz namunasi hali kam. Iltimos kameraga qarang, kamida {FACE_MIN_SAMPLES} ta yaxshi kadr kerak."
+            embedding = averaged_embedding(samples)
+            if not embedding:
+                return None, "Yuz embedding tayyor emas. Iltimos, kameraga qarab qayta urinib ko'ring."
+            best_sample = max(
+                samples,
+                key=lambda item: (
+                    int((item.get("quality") or {}).get("area") or 0),
+                    float((item.get("quality") or {}).get("blur") or 0),
+                ),
+            )
+            pending_registration["embedding"] = embedding
+            pending_registration["snapshot_path"] = best_sample.get("snapshot_path")
+            extracted = candidate
+        else:
+            try:
+                extracted = await llm.extract_person_name(name_text)
+            except Exception as exc:
+                logger.warning("Name extraction via LLM failed: %s", exc)
+                extracted = None
+            if not extracted:
+                extracted = parse_person_name_locally(name_text)
+            if not extracted or not extracted.get("first_name"):
+                return None, "Ismni tushunmadim. Iltimos, ism va familiyangizni ayting."
+            # last_name is optional: STT for Uzbek is imperfect, so don't loop forever
+            # demanding a surname. The confirmation step below lets the patient correct it.
+            pending_registration["candidate_name"] = {
+                "first_name": extracted.get("first_name", ""),
+                "last_name": extracted.get("last_name", ""),
+            }
+            full_name = f'{extracted.get("first_name", "")} {extracted.get("last_name", "")}'.strip()
+            return None, f"Sizning ism-familiyangiz {full_name}mi? To'g'ri bo'lsa ha, noto'g'ri bo'lsa yo'q deng."
 
         if not pending_registration.get("embedding") or not pending_registration.get("snapshot_path"):
             logger.warning("Pending registration is missing embedding or snapshot_path: %s", pending_registration.keys())
@@ -2371,13 +3192,14 @@ async def websocket_endpoint(websocket: WebSocket):
             get_face_store().add_snapshot(current_person["person_id"], permanent_snapshot)
             current_person["snapshots"] = [permanent_snapshot]
             upsert_registered_face_registry(current_person, permanent_snapshot)
-            pending_path = Path(pending_registration.get("snapshot_path") or "")
             permanent_path = Path(permanent_snapshot)
-            if pending_path.exists() and pending_path.name.startswith("pending_") and pending_path != permanent_path:
-                try:
-                    pending_path.unlink()
-                except OSError:
-                    logger.warning("Could not delete pending face snapshot: %s", pending_path)
+            for sample in samples:
+                pending_path = Path(sample.get("snapshot_path") or "")
+                if pending_path.exists() and pending_path.name.startswith("pending_") and pending_path != permanent_path:
+                    try:
+                        pending_path.unlink()
+                    except OSError:
+                        logger.warning("Could not delete pending face snapshot: %s", pending_path)
         else:
             logger.warning(
                 "Face registered in vector DB but registry.json was not updated because no permanent snapshot was available: person_id=%s",
@@ -2465,19 +3287,116 @@ async def websocket_endpoint(websocket: WebSocket):
         full_llm_resp   = ""
         sentence_buf    = ""
 
+        async def chat_tool_executor(name: str, args: dict) -> dict:
+            nonlocal current_person, pending_registration
+            if name == "register_patient":
+                if not pending_registration:
+                    return {"ok": False, "reason": "no_face",
+                            "message": "Yuz hali aniqlanmadi. Bemordan kameraga qarashini so'rang."}
+                first_name = str(args.get("first_name", "")).strip()
+                last_name = str(args.get("last_name", "")).strip()
+                if not first_name:
+                    return {"ok": False, "reason": "no_name", "message": "Ism kerak."}
+                samples = list(pending_registration.get("samples") or [])
+                if not samples and pending_registration.get("embedding"):
+                    samples = [{
+                        "embedding": pending_registration.get("embedding"),
+                        "snapshot_path": pending_registration.get("snapshot_path"),
+                        "quality": pending_registration.get("quality") or {},
+                    }]
+                if len(samples) < FACE_MIN_SAMPLES:
+                    return {"ok": False, "reason": "need_more_samples",
+                            "have": len(samples), "needed": FACE_MIN_SAMPLES,
+                            "message": f"Yuz namunasi kam ({len(samples)}/{FACE_MIN_SAMPLES}). "
+                                       "Bemor bir oz kameraga qarab tursin."}
+                embedding = averaged_embedding(samples)
+                if not embedding:
+                    return {"ok": False, "reason": "no_embedding", "message": "Yuz embedding tayyor emas."}
+                best_sample = max(samples, key=lambda item: (
+                    int((item.get("quality") or {}).get("area") or 0),
+                    float((item.get("quality") or {}).get("blur") or 0),
+                ))
+                snapshot_path = best_sample.get("snapshot_path")
+                metadata = merge_patient_screening(
+                    {}, compact_thermal_screening(pending_registration.get("thermal")))
+                person = get_face_store().register(
+                    embedding=embedding,
+                    first_name=first_name,
+                    last_name=last_name,
+                    snapshot_path=snapshot_path,
+                    metadata=metadata,
+                )
+                permanent_snapshot = persist_registered_face_snapshot(snapshot_path, person["person_id"])
+                if permanent_snapshot:
+                    get_face_store().add_snapshot(person["person_id"], permanent_snapshot)
+                    person["snapshots"] = [permanent_snapshot]
+                    upsert_registered_face_registry(person, permanent_snapshot)
+                    permanent_path = Path(permanent_snapshot)
+                    for sample in samples:
+                        pending_path = Path(sample.get("snapshot_path") or "")
+                        if pending_path.exists() and pending_path.name.startswith("pending_") and pending_path != permanent_path:
+                            try:
+                                pending_path.unlink()
+                            except OSError:
+                                logger.warning("Could not delete pending face snapshot: %s", pending_path)
+                current_person = person
+                pending_registration = None
+                return {
+                    "ok": True,
+                    "full_name": person.get("full_name") or f"{first_name} {last_name}".strip(),
+                    "person_id": person.get("person_id"),
+                    "thermal": latest_thermal_text(person),
+                }
+            if name == "find_doctor":
+                symptoms = str(args.get("symptoms", "")).strip()
+                if is_emergency_case(symptoms):
+                    return {
+                        "emergency": True,
+                        "advice": "Bu shoshilinch holat bo'lishi mumkin. 103 ga qo'ng'iroq qiling "
+                                  "yoki navbatchi shifokorga darhol murojaat qiling.",
+                    }
+                doctor, score, matches = doctor_router_retrieve(symptoms)
+                if not doctor:
+                    return {"found": False, "hint": "Mos shifokor topilmadi, qabul shifokorini tavsiya qiling."}
+                return {
+                    "found": True,
+                    "doctor": doctor_public_info(doctor, current_lang),
+                    "basic_advice": basic_patient_advice(symptoms, current_lang),
+                }
+            if name == "book_appointment":
+                try:
+                    doctor_id = int(args.get("doctor_id"))
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": "doctor_id (butun son) talab qilinadi"}
+                doctor = next((d for d in DOCTOR_DIRECTORY if d.get("id") == doctor_id), None)
+                if not doctor:
+                    return {"ok": False, "error": "Bunday doctor_id yo'q"}
+                item = add_patient_to_doctor_queue(current_person, doctor)
+                return {
+                    "ok": True,
+                    "doctor": doctor_public_info(doctor, current_lang),
+                    "queue_number": item.get("queue_number"),
+                    "room": doctor.get("room"),
+                    "work_time": doctor.get("work_time"),
+                    "date": item.get("date"),
+                }
+            return {"error": f"unknown tool {name}"}
+
         try:
-            direct_resp = local_direct_response(user_text, current_person, current_lang)
-            if direct_resp:
-                full_llm_resp = direct_resp
+            verbatim = verbatim_internal_reply(user_text)
+            if verbatim:
+                full_llm_resp = verbatim
                 await websocket.send_json({
                     "type": "llm_partial",
-                    "text": direct_resp,
+                    "text": verbatim,
                     "response_id": generation,
                 })
                 if not response_cancelled.is_set() and generation == response_generation:
-                    tts_session.feed(direct_resp)
+                    tts_session.feed(verbatim)
             else:
-                async for llm_chunk in llm.get_response_stream(messages):
+                async for llm_chunk in llm.get_response_stream(
+                    messages, tools=CHAT_TOOLS, tool_executor=chat_tool_executor
+                ):
                     if response_cancelled.is_set() or generation != response_generation:
                         break
                     full_llm_resp += llm_chunk
@@ -2584,10 +3503,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.send_json({"type": "interrupt"})
 
                 elif msg_type == "person_left":
+                    # The patient stepped out of frame. Keep the greeting trackers and
+                    # the conversation history (messages) so that if the SAME person
+                    # returns shortly we continue the conversation instead of greeting
+                    # again. A different person, or the same one after REGREET_GRACE_S,
+                    # still gets a fresh greeting (see should_greet below).
                     current_person = None
                     pending_registration = None
-                    last_auto_greet_key = None
-                    last_auto_greet_at = 0.0
 
                 elif msg_type == "face_identity":
                     incoming_person = msg.get("person")
@@ -2609,10 +3531,30 @@ async def websocket_endpoint(websocket: WebSocket):
                         current_person = None
                         if not pending_registration:
                             pending_registration = incoming_pending
-                        elif incoming_pending.get("embedding"):
-                            pending_registration["embedding"] = incoming_pending["embedding"]
-                        if incoming_pending.get("snapshot_path"):
-                            pending_registration["snapshot_path"] = incoming_pending["snapshot_path"]
+                        incoming_samples = list(incoming_pending.get("samples") or [])
+                        if not incoming_samples and incoming_pending.get("embedding"):
+                            incoming_samples = [{
+                                "embedding": incoming_pending.get("embedding"),
+                                "snapshot_path": incoming_pending.get("snapshot_path"),
+                                "quality": incoming_pending.get("quality") or {},
+                            }]
+                        samples = list(pending_registration.get("samples") or [])
+                        seen_snapshots = {sample.get("snapshot_path") for sample in samples}
+                        for sample in incoming_samples:
+                            if sample.get("snapshot_path") not in seen_snapshots:
+                                samples.append(sample)
+                                seen_snapshots.add(sample.get("snapshot_path"))
+                        pending_registration["samples"] = samples[-5:]
+                        if samples:
+                            best_sample = max(
+                                samples,
+                                key=lambda item: (
+                                    int((item.get("quality") or {}).get("area") or 0),
+                                    float((item.get("quality") or {}).get("blur") or 0),
+                                ),
+                            )
+                            pending_registration["embedding"] = averaged_embedding(samples)
+                            pending_registration["snapshot_path"] = best_sample.get("snapshot_path")
                         pending_registration["thermal"] = thermal_context or pending_registration.get("thermal")
                     else:
                         current_person = None
@@ -2621,17 +3563,19 @@ async def websocket_endpoint(websocket: WebSocket):
                         if current_person:
                             full_name = current_person.get("full_name") or current_person.get("first_name", "")
                             greeting = (
-                                f"Oldingizda {full_name.strip()} turibdi. "
+                                f"Kameraga tanish bemor {full_name.strip()} qaytib keldi. "
                                 f"{latest_thermal_text(current_person)} "
-                                "Uni ismi bilan qisqa salomlang, raqamli kartasi yangilanganini ayting va so'rang: "
-                                "sizni nima bezovta qilyapti?"
+                                "Uni ismi bilan iliq kutib oling (masalan: 'Sizni qayta ko'rganimdan xursandman'). "
+                                "Sessiya tarixini eslang: agar avvalgi shikoyati yoki navbati bo'lsa, qisqa eslatib o'ting "
+                                "(masalan o'sha shikoyat davom etyaptimi deb so'rang); aks holda hozir nima bezovta "
+                                "qilayotganini so'rang. Qisqa va tabiiy bo'ling."
                             )
                             greet_key = current_person.get("person_id") or full_name
                         elif pending_registration:
                             greeting = (
                                 "Oldingizda yangi bemor turibdi. Salom bering va aynan shu mazmunda so'rang: "
                                 '"Men yuqumli kasalliklar shifoxonasi uchun UzMAX robotman. '
-                                "Iltimos, ismingizni ayting.\""
+                                "Iltimos, ism va familiyangizni ayting.\""
                             )
                             greet_key = "unknown_patient"
                         else:
@@ -2639,9 +3583,19 @@ async def websocket_endpoint(websocket: WebSocket):
                             greet_key = None
 
                         now = time.time()
+                        # Re-greet only a different person, or the same one after a real
+                        # absence. A brief disappear+return of the same person within the
+                        # grace window continues the conversation without greeting again.
+                        REGREET_GRACE_S = 120
                         should_greet = bool(greeting) and (
-                            greet_key != last_auto_greet_key or now - last_auto_greet_at > 45
+                            greet_key != last_auto_greet_key or now - last_auto_greet_at > REGREET_GRACE_S
                         )
+
+                        if not should_greet and greeting and greet_key == last_auto_greet_key:
+                            # Same person returned within the grace window: don't greet,
+                            # just refresh the timer so repeated brief flickers keep
+                            # continuing the conversation rather than re-greeting.
+                            last_auto_greet_at = now
 
                         if should_greet:
                             last_auto_greet_key = greet_key
@@ -2658,47 +3612,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                     if is_responding:
                         force_cancel_response()
-                    if pending_registration:
-                        registered_person, registration_error = await register_pending_person(final_text)
-                        if registration_error and registered_person is None:
-                            await websocket.send_json({"type": "chat_error", "message": registration_error})
-                            continue
-                        if registered_person:
-                            messages.append({"role": "user", "content": final_text})
-                            reg_prompt = (
-                                f"Endi siz bu odamni taniysiz: {registered_person['full_name']}. "
-                                f"{latest_thermal_text(registered_person)} "
-                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting "
-                                "va so'rang: sizni nima bezovta qilyapti?"
-                            )
-                            messages.append({"role": "user", "content": reg_prompt})
-                            response_generation += 1
-                            active_response_task = asyncio.create_task(
-                                process_response(reg_prompt, response_generation)
-                            )
-                            continue
-                    updated_person, update_error = await update_current_person_name(final_text)
-                    if update_error:
-                        await websocket.send_json({"type": "chat_error", "message": update_error})
-                        continue
-                    if updated_person:
-                        reply = f"Bemor ismi {updated_person['full_name']} deb yangilandi. Juda qisqa tasdiqlang."
-                        messages.append({"role": "user", "content": reply})
-                        response_generation += 1
-                        active_response_task = asyncio.create_task(
-                            process_response(reply, response_generation)
-                        )
-                        continue
+                    last_auto_greet_at = time.time()   # keep session fresh: grace runs from last interaction
                     current_person = append_patient_note(current_person, final_text)
-                    routed = route_patient_request(final_text, current_person, current_lang)
-                    message_text = final_text
-                    if routed:
-                        message_text = (
-                            f"{final_text}\n\n"
-                            f"UzMAX routing natijasi: {routed}\n"
-                            "Bemorga shu yo'nalishni qisqa, aniq va hurmat bilan ayting."
-                        )
-                    messages.append({"role": "user", "content": message_text})
+                    messages.append({"role": "user", "content": final_text})
                     response_generation += 1
                     active_response_task = asyncio.create_task(
                         process_response(final_text, response_generation)
@@ -2707,7 +3623,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type == "end_speech":
                     if not stt_session:
                         continue
+                    _t_finish = time.perf_counter()
                     final_text  = await stt_session.finish()
+                    logger.info("[STT] end_speech -> final in %.2fs text=%r",
+                                time.perf_counter() - _t_finish, (final_text or "")[:80])
                     stt_session = None
                     stop_partial_sender()
 
@@ -2727,55 +3646,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             await websocket.send_json({"type": "ready_to_listen"})
                         continue
 
-                    if pending_registration:
-                        registered_person, registration_error = await register_pending_person(final_text)
-                        if registration_error and registered_person is None:
-                            await websocket.send_json({"type": "chat_error", "message": registration_error})
-                            continue
-                        if registered_person:
-                            await websocket.send_json({"type": "stt_final", "text": final_text})
-                            messages.append({"role": "user", "content": final_text})
-                            reg_prompt = (
-                                f"Endi siz bu odamni taniysiz: {registered_person['full_name']}. "
-                                f"{latest_thermal_text(registered_person)} "
-                                "Ismi bilan qisqa salomlashing, thermal skrining raqamli bemor kartasiga saqlanganini ayting "
-                                "va so'rang: sizni nima bezovta qilyapti?"
-                            )
-                            messages.append({"role": "user", "content": reg_prompt})
-                            response_generation += 1
-                            active_response_task = asyncio.create_task(
-                                process_response(reg_prompt, response_generation)
-                            )
-                            continue
-
-                    updated_person, update_error = await update_current_person_name(final_text)
-                    if update_error:
-                        await websocket.send_json({"type": "chat_error", "message": update_error})
-                        continue
-                    if updated_person:
-                        await websocket.send_json({"type": "stt_final", "text": final_text})
-                        reply = f"Bemor ismi {updated_person['full_name']} deb yangilandi. Juda qisqa tasdiqlang."
-                        messages.append({"role": "user", "content": reply})
-                        response_generation += 1
-                        active_response_task = asyncio.create_task(
-                            process_response(reply, response_generation)
-                        )
-                        continue
-
                     if is_responding:
                         force_cancel_response()
 
                     await websocket.send_json({"type": "stt_final", "text": final_text})
+                    last_auto_greet_at = time.time()   # keep session fresh: grace runs from last interaction
                     current_person = append_patient_note(current_person, final_text)
-                    routed = route_patient_request(final_text, current_person, current_lang)
-                    message_text = final_text
-                    if routed:
-                        message_text = (
-                            f"{final_text}\n\n"
-                            f"UzMAX routing natijasi: {routed}\n"
-                            "Bemorga shu yo'nalishni qisqa, aniq va hurmat bilan ayting."
-                        )
-                    messages.append({"role": "user", "content": message_text})
+                    messages.append({"role": "user", "content": final_text})
                     response_generation += 1
                     active_response_task = asyncio.create_task(
                         process_response(final_text, response_generation)
@@ -2886,9 +3763,27 @@ if __name__ == "__main__":
             print("Stop the existing UzMAX server or set UZMAX_PORT to another port.")
             raise SystemExit(1)
 
+    # HTTPS is required for the camera/microphone (getUserMedia) to work when the
+    # dashboard is opened over a LAN IP — browsers block them on http:// non-localhost
+    # origins. Falls back to plain http when no certificate is configured/found.
+    ssl_certfile = os.getenv("UZMAX_SSL_CERT", "certs/uzmax.crt")
+    ssl_keyfile = os.getenv("UZMAX_SSL_KEY", "certs/uzmax.key")
+    use_tls = Path(ssl_certfile).exists() and Path(ssl_keyfile).exists()
+    scheme = "https" if use_tls else "http"
+
     print("=" * 56)
-    print(f"  UzMAX Unified Server  ->  http://127.0.0.1:{port}")
-    print(f"  LAN/server link       ->  http://YOUR_SERVER_IP:{port}")
+    print(f"  UzMAX Unified Server  ->  {scheme}://127.0.0.1:{port}")
+    print(f"  LAN/server link       ->  {scheme}://YOUR_SERVER_IP:{port}")
     print("  Medical AI  +  Robot Control (HAND/HEAD/MOVE)")
+    if not use_tls:
+        print("  WARNING: running over http — camera/mic only work on localhost.")
+        print("           Add a TLS cert (certs/uzmax.crt + .key) for LAN access.")
     print("=" * 56)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level="info",
+        ssl_certfile=ssl_certfile if use_tls else None,
+        ssl_keyfile=ssl_keyfile if use_tls else None,
+    )
