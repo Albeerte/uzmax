@@ -585,9 +585,18 @@ class TtsStreamingSession:
         self._drain_task: asyncio.Task | None = None
         self._thread_audio_queue: _queue.Queue | None = None
         self._voice = voice
+        self._started = False
 
     def start(self):
-        """Запускает gRPC синтез в фоновом потоке."""
+        """Arm the session. The gRPC synthesis stream opens lazily on the first
+        non-empty text chunk (see feed), so a response that produces no text never
+        opens a stream and never triggers Yandex 'Empty text' errors."""
+        self._started = False
+
+    def _ensure_started(self):
+        if self._started:
+            return
+        self._started = True
         thread_audio_queue = _queue.Queue()
         self._thread_audio_queue = thread_audio_queue
         self._task = self._loop.create_task(
@@ -613,11 +622,19 @@ class TtsStreamingSession:
             await self._audio_queue.put(chunk)
 
     def feed(self, text: str):
-        """Отправляет текст для синтеза."""
+        """Queue text for synthesis. Empty/whitespace text is dropped (T1) and the
+        gRPC stream is opened on the first real chunk (T2)."""
+        if not text or not text.strip():
+            return
+        self._ensure_started()
         self._text_queue.put(text)
 
     async def finish(self):
         """Сигнализирует об окончании текста и ждет завершения синтеза."""
+        if not self._started:
+            # T3: nothing was synthesized — unblock the audio consumer cleanly.
+            await self._audio_queue.put(None)
+            return
         self._text_queue.put(None)
         if self._task:
             await self._task
@@ -626,6 +643,12 @@ class TtsStreamingSession:
 
     def cancel(self):
         """Прерывает потоковый синтез и останавливает перенос аудио-чанков."""
+        if not self._started:
+            try:
+                self._audio_queue.put_nowait(None)
+            except Exception:
+                pass
+            return
         try:
             self._text_queue.put_nowait(None)
         except Exception:
